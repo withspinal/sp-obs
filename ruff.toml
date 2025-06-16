@@ -1,0 +1,30 @@
+target-version = "py313"
+
+# Exclude specific directories (commonly virtual environments or build artifacts)
+exclude = [
+    ".venv",
+    ".venv_*",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "frontend",
+]
+
+line-length = 120
+
+
+[lint]
+select = ["E4", "E7", "E9", "F"]
+
+# Avoid trying to fix flake8-bugbear (`B`) violations.
+unfixable = ["B"]
+
+[lint.per-file-ignores]
+"__init__.py" = ["E402", "F403", "F401"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+

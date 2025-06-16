@@ -1,0 +1,280 @@
+"""
+SP-OBS: OpenTelemetry Span Interceptor
+Automatically attaches to existing TracerProvider to duplicate spans to custom endpoints
+"""
+
+import atexit
+import json
+import logging
+from typing import Optional, List, Dict
+from threading import Lock
+
+from opentelemetry import trace
+from opentelemetry.sdk.trace import SpanProcessor, ReadableSpan
+from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+import os
+import requests
+
+logger = logging.getLogger(__name__)
+
+
+class SpinalSpanExporter(SpanExporter):
+    """Exports spans to a custom HTTP endpoint"""
+
+    def __init__(
+        self, endpoint: str, headers: Optional[Dict[str, str]] = None, timeout: int = 30, batch_size: int = 100
+    ):
+        self.endpoint = endpoint
+        self.headers = (headers or {}) | {"X-API-KEY": os.getenv("SPINAL_API_KEY", "")}
+        self.timeout = timeout
+        self.batch_size = batch_size
+        self._shutdown = False
+
+    def export(self, spans: List[ReadableSpan]) -> SpanExportResult:
+        if self._shutdown:
+            return SpanExportResult.FAILURE
+
+        try:
+            # Convert spans to JSON-serializable format
+            span_data = []
+            for span in spans:
+                span_dict = {
+                    "name": span.name,
+                    "trace_id": format(span.get_span_context().trace_id, "032x"),
+                    "span_id": format(span.get_span_context().span_id, "016x"),
+                    "parent_span_id": format(span.parent.span_id, "016x") if span.parent else None,
+                    "start_time": span.start_time,
+                    "end_time": span.end_time,
+                    "status": {"status_code": span.status.status_code.name, "description": span.status.description}
+                    if span.status
+                    else None,
+                    "attributes": dict(span.attributes) if span.attributes else {},
+                    "events": [
+                        {
+                            "name": event.name,
+                            "timestamp": event.timestamp,
+                            "attributes": dict(event.attributes) if event.attributes else {},
+                        }
+                        for event in span.events
+                    ]
+                    if span.events
+                    else [],
+                    "links": [
+                        {
+                            "context": {
+                                "trace_id": format(link.context.trace_id, "032x"),
+                                "span_id": format(link.context.span_id, "016x"),
+                            },
+                            "attributes": dict(link.attributes) if link.attributes else {},
+                        }
+                        for link in span.links
+                    ]
+                    if span.links
+                    else [],
+                    "resource": dict(span.resource.attributes) if span.resource else {},
+                    "instrumentation_info": {
+                        "name": span.instrumentation_scope.name,
+                        "version": span.instrumentation_scope.version,
+                    }
+                    if span.instrumentation_scope
+                    else None,
+                }
+                span_data.append(span_dict)
+
+            # Send to endpoint
+            response = requests.post(
+                self.endpoint, json={"spans": span_data}, headers=self.headers, timeout=self.timeout
+            )
+
+            if response.status_code >= 200 and response.status_code < 300:
+                logger.debug(f"Successfully exported {len(spans)} spans to {self.endpoint}")
+                return SpanExportResult.SUCCESS
+            else:
+                logger.error(f"Failed to export spans. Status: {response.status_code}, Response: {response.text}")
+                return SpanExportResult.FAILURE
+
+        except Exception as e:
+            logger.error(f"Error exporting spans: {e}")
+            return SpanExportResult.FAILURE
+
+    def shutdown(self) -> None:
+        self._shutdown = True
+
+
+class SpinalSpanProcessor(SpanProcessor):
+    """Processes spans and forwards them to the custom exporter"""
+
+    def __init__(self, exporter: SpinalSpanExporter):
+        self.exporter = exporter
+        self._lock = Lock()
+        self._span_buffer: List[ReadableSpan] = []
+
+    def on_start(self, span: ReadableSpan, parent_context: Optional[trace.Context] = None) -> None:
+        """Called when a span is started"""
+        pass
+
+    def on_end(self, span: ReadableSpan) -> None:
+        """Called when a span is ended - this is where we intercept"""
+        # We only care about spans from gen_ai sources right now.
+        # opentel semantics can be found here https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/
+
+        # we can use the attribute 'gen_ai.system' to determine if this span is related to Gen AI
+        if not span.attributes.get("gen_ai.system"):
+            return
+
+        with self._lock:
+            self._span_buffer.append(span)
+
+            # Export immediately (no batching)
+            # For simplicity, we'll export immediately
+            result = self.exporter.export([span])
+            if result == SpanExportResult.SUCCESS:
+                self._span_buffer.clear()
+
+    def shutdown(self) -> None:
+        """Shutdown the processor"""
+        # Export any remaining spans
+        with self._lock:
+            if self._span_buffer:
+                self.exporter.export(self._span_buffer)
+                self._span_buffer.clear()
+        self.exporter.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        """Force flush any pending spans"""
+        with self._lock:
+            if self._span_buffer:
+                result = self.exporter.export(self._span_buffer)
+                if result == SpanExportResult.SUCCESS:
+                    self._span_buffer.clear()
+                    return True
+        return False
+
+
+class SpanInterceptor:
+    """Main class for intercepting spans"""
+
+    _instance = None
+    _lock = Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if not hasattr(self, "_initialized"):
+            self._initialized = True
+            self._processors: List[SpinalSpanProcessor] = []
+            self._attached = False
+
+    def attach_to_provider(
+        self, endpoint: str, headers: Optional[Dict[str, str]] = None, auto_detect: bool = True
+    ) -> bool:
+        """
+        Attach custom span processor to existing TracerProvider
+
+        Args:
+            endpoint: HTTP endpoint to send spans to
+            headers: Optional headers for the HTTP request
+            auto_detect: Whether to auto-detect and attach to existing provider
+
+        Returns:
+            bool: True if successfully attached, False otherwise
+        """
+        try:
+            tracer_provider = trace.get_tracer_provider()
+
+            # Check for open telemetry providers
+            if hasattr(tracer_provider, "add_span_processor"):
+                exporter = SpinalSpanExporter(endpoint, headers)
+                processor = SpinalSpanProcessor(exporter)
+
+                # Add processor to provider - this processor will handle ALL spans from instrumentation tools
+                tracer_provider.add_span_processor(processor)
+
+                self._processors.append(processor)
+                self._attached = True
+
+                # Register shutdown handler
+                atexit.register(self._shutdown)
+
+                logger.info(f"Successfully attached span interceptor to TracerProvider. Endpoint: {endpoint}")
+                return True
+            else:
+                logger.warning(
+                    "Current TracerProvider doesn't support adding processors. "
+                    "Make sure OpenTelemetry SDK is properly initialized."
+                )
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to attach span interceptor: {e}")
+            return False
+
+    def _shutdown(self):
+        """Cleanup on exit"""
+        for processor in self._processors:
+            try:
+                processor.shutdown()
+            except Exception as e:
+                logger.error(f"Error shutting down processor: {e}")
+
+    def is_attached(self) -> bool:
+        """Check if interceptor is attached to a provider"""
+        return self._attached
+
+
+# Singleton instance
+_interceptor = SpanInterceptor()
+
+
+def init(endpoint: str, headers: Optional[Dict[str, str]] = None, log_level: str = "INFO") -> SpanInterceptor:
+    """
+    Initialize the span interceptor
+
+    Args:
+        endpoint: HTTP endpoint to send spans to
+        headers: Optional headers for the HTTP request
+        log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
+
+    Returns:
+        SpanInterceptor instance
+
+    Example:
+        import sp_obs
+
+        # Initialize and auto-attach
+        sp_obs.init("https://my-observability-endpoint.com/spans",
+                   headers={"Authorization": "Bearer token"})
+    """
+    # Configure logging
+    logging.basicConfig(level=getattr(logging, log_level.upper()))
+    _interceptor.attach_to_provider(endpoint, headers)
+
+    return _interceptor
+
+
+def attach(endpoint: str, headers: Optional[dict[str, str]] = None) -> bool:
+    """
+    Manually attach to the current TracerProvider
+
+    Args:
+        endpoint: HTTP endpoint to send spans to
+        headers: Optional headers for the HTTP request
+
+    Returns:
+        bool: True if successfully attached
+    """
+    return _interceptor.attach_to_provider(endpoint, headers)
+
+
+def is_attached() -> bool:
+    """Check if the interceptor is attached"""
+    return _interceptor.is_attached()
+
+
+if os.getenv("SPINAL_TRACING_ENDPOINT"):
+    init(endpoint=os.getenv("SPINAL_TRACING_ENDPOINT"), headers=json.loads(os.getenv("SPINAL_TRACING_HEADERS", "{}")))
