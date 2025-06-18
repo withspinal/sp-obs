@@ -4,18 +4,23 @@ Automatically attaches to existing TracerProvider to duplicate spans to custom e
 """
 
 import atexit
+import contextvars
 import json
 import logging
-from typing import Optional, List, Dict
+from typing import Any, Optional, List, Dict
 from threading import Lock
 
 from opentelemetry import trace
 from opentelemetry.sdk.trace import SpanProcessor, ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 import os
-import requests
+
+from opentelemetry.trace import Span
 
 logger = logging.getLogger(__name__)
+
+# Create a context key for user data that propagates with traces
+TRACE_USER_CONTEXT = contextvars.ContextVar("spinal_user_context", default={})
 
 
 class SpinalSpanExporter(SpanExporter):
@@ -81,17 +86,18 @@ class SpinalSpanExporter(SpanExporter):
                 }
                 span_data.append(span_dict)
 
+            print(span_data)
             # Send to endpoint
-            response = requests.post(
-                self.endpoint, json={"spans": span_data}, headers=self.headers, timeout=self.timeout
-            )
-
-            if response.status_code >= 200 and response.status_code < 300:
-                logger.debug(f"Successfully exported {len(spans)} spans to {self.endpoint}")
-                return SpanExportResult.SUCCESS
-            else:
-                logger.error(f"Failed to export spans. Status: {response.status_code}, Response: {response.text}")
-                return SpanExportResult.FAILURE
+            # response = requests.post(
+            #     self.endpoint, json={"spans": span_data}, headers=self.headers, timeout=self.timeout
+            # )
+            #
+            # if response.status_code >= 200 and response.status_code < 300:
+            #     logger.debug(f"Successfully exported {len(spans)} spans to {self.endpoint}")
+            #     return SpanExportResult.SUCCESS
+            # else:
+            #     logger.error(f"Failed to export spans. Status: {response.status_code}, Response: {response.text}")
+            #     return SpanExportResult.FAILURE
 
         except Exception as e:
             logger.error(f"Error exporting spans: {e}")
@@ -109,17 +115,22 @@ class SpinalSpanProcessor(SpanProcessor):
         self._lock = Lock()
         self._span_buffer: List[ReadableSpan] = []
 
-    def on_start(self, span: ReadableSpan, parent_context: Optional[trace.Context] = None) -> None:
+    def on_start(self, span: Span, parent_context: Optional[trace.Context] = None) -> None:
         """Called when a span is started"""
-        pass
+        trace_id = span.get_span_context().trace_id
+        all_contexts = TRACE_USER_CONTEXT.get()
+
+        spinal_context = all_contexts.get(trace_id, {})
+        if spinal_context:
+            span.set_attribute("spinal", str(spinal_context))
 
     def on_end(self, span: ReadableSpan) -> None:
         """Called when a span is ended - this is where we intercept"""
         # We only care about spans from gen_ai sources right now.
         # opentel semantics can be found here https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/
 
-        # we can use the attribute 'gen_ai.system' to determine if this span is related to Gen AI
-        if not span.attributes.get("gen_ai.system"):
+        # Allow gen.ai and billable events to be exported
+        if not span.attributes.get("gen_ai.system") and span.name != "spinal_billable_event":
             return
 
         with self._lock:
@@ -257,23 +268,61 @@ def init(endpoint: str, headers: Optional[Dict[str, str]] = None, log_level: str
     return _interceptor
 
 
-def attach(endpoint: str, headers: Optional[dict[str, str]] = None) -> bool:
-    """
-    Manually attach to the current TracerProvider
-
-    Args:
-        endpoint: HTTP endpoint to send spans to
-        headers: Optional headers for the HTTP request
-
-    Returns:
-        bool: True if successfully attached
-    """
-    return _interceptor.attach_to_provider(endpoint, headers)
-
-
 def is_attached() -> bool:
     """Check if the interceptor is attached"""
     return _interceptor.is_attached()
+
+
+def add_user_context(mapped_user_id: str, attributes: Optional[Dict[str, Any]] = None):
+    """
+    Add user context directly to the current span and all child spans
+
+    Args:
+        mapped_user_id: The user identifier to propagate
+        attributes: Optional dictionary of additional user attributes
+    """
+    # Get the current span
+    current_span = trace.get_current_span()
+
+    if not current_span or current_span == trace.INVALID_SPAN:
+        logger.warning("No active span found - user context will not be attached")
+        return
+
+    user_context = {"id": mapped_user_id, **(attributes or {})}
+    trace_id = current_span.get_span_context().trace_id
+
+    # Get current contexts and add this trace's context
+    current_contexts = TRACE_USER_CONTEXT.get().copy()
+    current_contexts[trace_id] = {"user": user_context}
+    TRACE_USER_CONTEXT.set(current_contexts)
+    logger.debug(f"Set user context on span: {mapped_user_id} with attributes: {attributes}")
+
+
+def add_as_billable(attributes: Optional[Dict[str, Any]] = None):
+    """
+    Add information on the trace that allows us to track it across our billing engine
+    """
+    current_span = trace.get_current_span()
+
+    if not current_span or current_span == trace.INVALID_SPAN:
+        logger.error("No active span found - billing information cannot be attached!")
+        return
+
+    trace_id = current_span.get_span_context().trace_id
+
+    tracer = trace.get_tracer(__name__)
+    with tracer.start_as_current_span("spinal_billable_event") as billing_span:
+        # Mark this as a billable span
+        billing_span.set_attribute("billable", True)
+        billing_span.set_attribute("billing_trace_id", format(trace_id, "032x"))
+
+        # Add any custom attributes
+        if attributes:
+            for key, value in attributes.items():
+                billing_span.set_attribute(f"user_attr.{key}", value)
+
+        # This span will auto-end and be sent to your processor
+        logger.debug(f"Created billable event span with attributes: {attributes}")
 
 
 if os.getenv("SPINAL_TRACING_ENDPOINT"):
