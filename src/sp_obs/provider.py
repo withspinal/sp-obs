@@ -5,11 +5,11 @@ Automatically attaches to existing TracerProvider to duplicate spans to custom e
 
 import atexit
 import contextvars
-import json
 import logging
 from typing import Any, Optional, List, Dict
 from threading import Lock
 
+import requests
 from opentelemetry import trace
 from opentelemetry.sdk.trace import SpanProcessor, ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
@@ -30,7 +30,7 @@ class SpinalSpanExporter(SpanExporter):
         self, endpoint: str, headers: Optional[Dict[str, str]] = None, timeout: int = 30, batch_size: int = 100
     ):
         self.endpoint = endpoint
-        self.headers = (headers or {}) | {"X-API-KEY": os.getenv("SPINAL_API_KEY", "")}
+        self.headers = (headers or {}) | {"X-SPINAL-API-KEY": os.getenv("SPINAL_API_KEY", "")}
         self.timeout = timeout
         self.batch_size = batch_size
         self._shutdown = False
@@ -86,18 +86,17 @@ class SpinalSpanExporter(SpanExporter):
                 }
                 span_data.append(span_dict)
 
-            print(span_data)
             # Send to endpoint
-            # response = requests.post(
-            #     self.endpoint, json={"spans": span_data}, headers=self.headers, timeout=self.timeout
-            # )
-            #
-            # if response.status_code >= 200 and response.status_code < 300:
-            #     logger.debug(f"Successfully exported {len(spans)} spans to {self.endpoint}")
-            #     return SpanExportResult.SUCCESS
-            # else:
-            #     logger.error(f"Failed to export spans. Status: {response.status_code}, Response: {response.text}")
-            #     return SpanExportResult.FAILURE
+            response = requests.post(
+                self.endpoint, json={"spans": span_data}, headers=self.headers, timeout=self.timeout
+            )
+
+            if 200 <= response.status_code < 300:
+                logger.debug(f"Successfully exported {len(spans)} spans to {self.endpoint}")
+                return SpanExportResult.SUCCESS
+            else:
+                logger.error(f"Failed to export spans. Status: {response.status_code}, Response: {response.text}")
+                return SpanExportResult.FAILURE
 
         except Exception as e:
             logger.error(f"Error exporting spans: {e}")
@@ -122,7 +121,10 @@ class SpinalSpanProcessor(SpanProcessor):
 
         spinal_context = all_contexts.get(trace_id, {})
         if spinal_context:
-            span.set_attribute("spinal", str(spinal_context))
+            if user := spinal_context.get("user"):
+                for key, value in user.items():
+                    if isinstance(value, (str, int, float, bool)):
+                        span.set_attribute(f"spinal.user.{key}", value)
 
     def on_end(self, span: ReadableSpan) -> None:
         """Called when a span is ended - this is where we intercept"""
@@ -181,16 +183,14 @@ class SpanInterceptor:
             self._processors: List[SpinalSpanProcessor] = []
             self._attached = False
 
-    def attach_to_provider(
-        self, endpoint: str, headers: Optional[Dict[str, str]] = None, auto_detect: bool = True
-    ) -> bool:
+    def attach_to_provider(self, *, endpoint: str, headers: Optional[Dict[str, str]] = None, api_key: str) -> bool:
         """
         Attach custom span processor to existing TracerProvider
 
         Args:
             endpoint: HTTP endpoint to send spans to
             headers: Optional headers for the HTTP request
-            auto_detect: Whether to auto-detect and attach to existing provider
+            api_key: Optional API key for authentication
 
         Returns:
             bool: True if successfully attached, False otherwise
@@ -242,7 +242,9 @@ class SpanInterceptor:
 _interceptor = SpanInterceptor()
 
 
-def init(endpoint: str, headers: Optional[Dict[str, str]] = None, log_level: str = "INFO") -> SpanInterceptor:
+def init(
+    *, endpoint: str = "", headers: Optional[Dict[str, str]] = None, api_key: str = "", log_level: str = "INFO"
+) -> SpanInterceptor:
     """
     Initialize the span interceptor
 
@@ -261,9 +263,15 @@ def init(endpoint: str, headers: Optional[Dict[str, str]] = None, log_level: str
         sp_obs.init("https://my-observability-endpoint.com/spans",
                    headers={"Authorization": "Bearer token"})
     """
-    # Configure logging
     logging.basicConfig(level=getattr(logging, log_level.upper()))
-    _interceptor.attach_to_provider(endpoint, headers)
+
+    if not api_key:
+        api_key = os.getenv("SPINAL_API_KEY", "")
+
+    if not endpoint:
+        endpoint = os.getenv("SPINAL_TRACING_ENDPOINT", "")
+
+    _interceptor.attach_to_provider(endpoint=endpoint, headers=headers, api_key=api_key)
 
     return _interceptor
 
@@ -323,7 +331,3 @@ def add_as_billable(attributes: Optional[Dict[str, Any]] = None):
 
         # This span will auto-end and be sent to your processor
         logger.debug(f"Created billable event span with attributes: {attributes}")
-
-
-if os.getenv("SPINAL_TRACING_ENDPOINT"):
-    init(endpoint=os.getenv("SPINAL_TRACING_ENDPOINT"), headers=json.loads(os.getenv("SPINAL_TRACING_HEADERS", "{}")))
