@@ -3,17 +3,22 @@ SP-OBS: OpenTelemetry Span Interceptor
 Automatically attaches to existing TracerProvider to duplicate spans to custom endpoints
 """
 
+import typing
 import atexit
 import contextvars
 import logging
-from typing import Any, Optional, List, Dict
+import uuid
 from threading import Lock
-
+import functools
+import asyncio
 import requests
 from opentelemetry import trace
 from opentelemetry.sdk.trace import SpanProcessor, ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 import os
+
+if typing.TYPE_CHECKING:
+    pass
 
 from opentelemetry.trace import Span
 
@@ -22,12 +27,16 @@ logger = logging.getLogger(__name__)
 # Create a context key for user data that propagates with traces
 TRACE_USER_CONTEXT = contextvars.ContextVar("spinal_user_context", default={})
 
+BILLING_EVENT_SPAN_NAME = "spinal_billable_event"
+USER_CONTEXT_SPAN_NAME = "spinal_user_context"
+WORKFLOW_CONTEXT_SPAN_NAME = "spinal_workflow_context"
+
 
 class SpinalSpanExporter(SpanExporter):
     """Exports spans to a custom HTTP endpoint"""
 
     def __init__(
-        self, endpoint: str, headers: Optional[Dict[str, str]] = None, timeout: int = 30, batch_size: int = 100
+        self, endpoint: str, headers: typing.Optional[dict[str, str]] = None, timeout: int = 30, batch_size: int = 100
     ):
         self.endpoint = endpoint
         self.headers = (headers or {}) | {"X-SPINAL-API-KEY": os.getenv("SPINAL_API_KEY", "")}
@@ -35,7 +44,7 @@ class SpinalSpanExporter(SpanExporter):
         self.batch_size = batch_size
         self._shutdown = False
 
-    def export(self, spans: List[ReadableSpan]) -> SpanExportResult:
+    def export(self, spans: list[ReadableSpan]) -> SpanExportResult:
         if self._shutdown:
             return SpanExportResult.FAILURE
 
@@ -87,6 +96,8 @@ class SpinalSpanExporter(SpanExporter):
                 span_data.append(span_dict)
 
             # Send to endpoint
+            print(f"span_data: {span_data}")
+            return
             response = requests.post(
                 self.endpoint, json={"spans": span_data}, headers=self.headers, timeout=self.timeout
             )
@@ -112,19 +123,17 @@ class SpinalSpanProcessor(SpanProcessor):
     def __init__(self, exporter: SpinalSpanExporter):
         self.exporter = exporter
         self._lock = Lock()
-        self._span_buffer: List[ReadableSpan] = []
+        self._span_buffer: list[ReadableSpan] = []
 
-    def on_start(self, span: Span, parent_context: Optional[trace.Context] = None) -> None:
+    def on_start(self, span: Span, parent_context: typing.Optional[trace.Context] = None) -> None:
         """Called when a span is started"""
         trace_id = span.get_span_context().trace_id
         all_contexts = TRACE_USER_CONTEXT.get()
 
         spinal_context = all_contexts.get(trace_id, {})
         if spinal_context:
-            if user := spinal_context.get("user"):
-                for key, value in user.items():
-                    if isinstance(value, (str, int, float, bool)):
-                        span.set_attribute(f"spinal.user.{key}", value)
+            if workflow := spinal_context.get("workflow_id"):
+                span.set_attribute("spinal.workflow_id", workflow)
 
     def on_end(self, span: ReadableSpan) -> None:
         """Called when a span is ended - this is where we intercept"""
@@ -132,7 +141,12 @@ class SpinalSpanProcessor(SpanProcessor):
         # opentel semantics can be found here https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/
 
         # Allow gen.ai and billable events to be exported
-        if not span.attributes.get("gen_ai.system") and span.name != "spinal_billable_event":
+        gen_ai_span = span.attributes.get("gen_ai.system") is not None
+        billing_event = span.name == BILLING_EVENT_SPAN_NAME
+        user_context_span = span.name == USER_CONTEXT_SPAN_NAME
+
+        if not any([gen_ai_span, billing_event, user_context_span]):
+            logger.debug(f"Skipping span {span.name} - not a relevant spinal span")
             return
 
         with self._lock:
@@ -180,10 +194,12 @@ class SpanInterceptor:
     def __init__(self):
         if not hasattr(self, "_initialized"):
             self._initialized = True
-            self._processors: List[SpinalSpanProcessor] = []
+            self._processors: list[SpinalSpanProcessor] = []
             self._attached = False
 
-    def attach_to_provider(self, *, endpoint: str, headers: Optional[Dict[str, str]] = None, api_key: str) -> bool:
+    def attach_to_provider(
+        self, *, endpoint: str, headers: typing.Optional[dict[str, str]] = None, api_key: str
+    ) -> bool:
         """
         Attach custom span processor to existing TracerProvider
 
@@ -243,7 +259,7 @@ _interceptor = SpanInterceptor()
 
 
 def init(
-    *, endpoint: str = "", headers: Optional[Dict[str, str]] = None, api_key: str = "", log_level: str = "INFO"
+    *, endpoint: str = "", headers: typing.Optional[dict[str, str]] = None, api_key: str = "", log_level: str = "INFO"
 ) -> SpanInterceptor:
     """
     Initialize the span interceptor
@@ -281,7 +297,7 @@ def is_attached() -> bool:
     return _interceptor.is_attached()
 
 
-def add_user_context(mapped_user_id: str, attributes: Optional[Dict[str, Any]] = None):
+def add_user_context_1(mapped_user_id: str, attributes: typing.Optional[dict[str, typing.Any]] = None):
     """
     Add user context directly to the current span and all child spans
 
@@ -306,21 +322,32 @@ def add_user_context(mapped_user_id: str, attributes: Optional[Dict[str, Any]] =
     logger.debug(f"Set user context on span: {mapped_user_id} with attributes: {attributes}")
 
 
-def add_as_billable(attributes: Optional[Dict[str, Any]] = None):
+def add_user_context(mapped_user_id: str, attributes: typing.Optional[dict[str, typing.Any]] = None):
+    """
+    Add user context directly to the current span and all child spans
+
+    Args:
+        mapped_user_id: The user identifier to propagate
+        attributes: Optional dictionary of additional user attributes
+    """
+    tracer = trace.get_tracer(__name__)
+    with tracer.start_as_current_span(USER_CONTEXT_SPAN_NAME) as user_context_span:
+        user_context_span.set_attribute("id", mapped_user_id)
+        for key, value in (attributes or {}).items():
+            user_context_span.set_attribute(f"attr.{key}", value)
+
+    logger.debug("Created user context span")
+
+
+def add_as_billable(attributes: typing.Optional[dict[str, typing.Any]] = None):
     """
     Add information on the trace that allows us to track it across our billing engine
     """
-    current_span = trace.get_current_span()
-
-    if not current_span or current_span == trace.INVALID_SPAN:
-        logger.error("No active span found - billing information cannot be attached!")
-        return
-
-    trace_id = current_span.get_span_context().trace_id
-
     tracer = trace.get_tracer(__name__)
     with tracer.start_as_current_span("spinal_billable_event") as billing_span:
         # Mark this as a billable span
+        trace_id = billing_span.get_span_context().trace_id
+
         billing_span.set_attribute("billable", True)
         billing_span.set_attribute("billing_trace_id", format(trace_id, "032x"))
 
@@ -331,3 +358,41 @@ def add_as_billable(attributes: Optional[Dict[str, Any]] = None):
 
         # This span will auto-end and be sent to your processor
         logger.debug(f"Created billable event span with attributes: {attributes}")
+
+
+def spinal_tag_workflow(workflow_id: typing.Union[int, str, uuid.UUID]) -> typing.Callable:
+    """
+    Decorator to tag spans with a workflow ID
+
+    Args:
+        workflow_id: The workflow identifier to attach to the trace context
+
+    Example:
+        @spinal_tag_workflow(workflow_id=12345)
+        @app.post("/ask")
+        async def ask_question(request: QuestionRequest):
+            pass
+    """
+
+    def _add_workflow_to_context():
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span(WORKFLOW_CONTEXT_SPAN_NAME) as span:
+            span.set_attribute("workflow_id", str(workflow_id))
+
+    def decorator(func: typing.Callable) -> typing.Callable:
+        @functools.wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            _add_workflow_to_context()
+            return await func(*args, **kwargs)
+
+        @functools.wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            _add_workflow_to_context()
+            return func(*args, **kwargs)
+
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        else:
+            return sync_wrapper
+
+    return decorator
