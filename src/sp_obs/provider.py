@@ -3,21 +3,16 @@ SP-OBS: OpenTelemetry Span Interceptor
 Automatically attaches to existing TracerProvider to duplicate spans to custom endpoints
 """
 
-import threading
 import typing
-import atexit
 import contextvars
 import logging
 import uuid
-from threading import Lock
-import functools
-import asyncio
 import requests
 from opentelemetry import trace, context, baggage
-from opentelemetry.sdk.trace import SpanProcessor, ReadableSpan
+from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 import os
-
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import Span
 
 logger = logging.getLogger(__name__)
@@ -25,8 +20,41 @@ logger = logging.getLogger(__name__)
 # Create a context key for user data that propagates with traces
 TRACE_CONTEXT = contextvars.ContextVar("spinal_context", default={})
 
-_USER_DATA_BRIDGE: dict[str, dict[str, typing.Any]] = {}
-_BRIDGE_LOCK = threading.Lock()
+
+class SpinalConfig:
+    """
+    Configuration for Spinal observability integration
+
+    Args:
+        endpoint: HTTP endpoint to send spans to. Can also be set via SPINAL_TRACING_ENDPOINT env var
+        api_key: API key for authentication. Can also be set via SPINAL_API_KEY env var
+        headers: Optional custom headers for the HTTP request
+        timeout: Request timeout in seconds (default: 30)
+        batch_size: Batch size for span export (default: 100)
+    """
+
+    def __init__(
+        self,
+        endpoint: typing.Optional[str] = None,
+        api_key: typing.Optional[str] = None,
+        headers: typing.Optional[dict[str, str]] = None,
+        timeout: int = 5,
+        batch_size: int = 100,
+    ):
+        self.endpoint = endpoint or os.getenv("SPINAL_TRACING_ENDPOINT", "")
+        self.api_key = api_key or os.getenv("SPINAL_API_KEY", "")
+        self.headers = headers or {}
+        self.timeout = timeout
+        self.batch_size = batch_size
+
+        self.headers = self.headers | {"X-SPINAL-API-KEY": os.getenv("SPINAL_API_KEY", "")}
+
+        if not self.endpoint:
+            raise ValueError("Spinal endpoint must be provided either via parameter or SPINAL_TRACING_ENDPOINT env var")
+
+        if not self.api_key:
+            logger.warning("No API key provided. Set via parameter or SPINAL_API_KEY env var")
+
 
 BILLING_EVENT_SPAN_NAME = "spinal_billable_event"
 USER_CONTEXT_SPAN_NAME = "spinal_user_context"
@@ -36,13 +64,11 @@ WORKFLOW_CONTEXT_SPAN_NAME = "spinal_workflow_context"
 class SpinalSpanExporter(SpanExporter):
     """Exports spans to a custom HTTP endpoint"""
 
-    def __init__(
-        self, endpoint: str, headers: typing.Optional[dict[str, str]] = None, timeout: int = 30, batch_size: int = 100
-    ):
-        self.endpoint = endpoint
-        self.headers = (headers or {}) | {"X-SPINAL-API-KEY": os.getenv("SPINAL_API_KEY", "")}
-        self.timeout = timeout
-        self.batch_size = batch_size
+    def __init__(self, config: SpinalConfig | None):
+        self.endpoint = config.endpoint
+        self.headers = config.headers
+        self.timeout = config.timeout
+        self.batch_size = config.batch_size
         self._shutdown = False
 
     def export(self, spans: list[ReadableSpan]) -> SpanExportResult:
@@ -53,6 +79,24 @@ class SpinalSpanExporter(SpanExporter):
             # Convert spans to JSON-serializable format
             span_data = []
             for span in spans:
+                # Extract baggage context from the current context
+                current_baggage = {}
+                try:
+                    # Get workflow_id from baggage if available
+                    if workflow_id := baggage.get_baggage("workflow_id"):
+                        current_baggage["workflow_id"] = workflow_id
+
+                    # Get user context from baggage if available
+                    if user_context := baggage.get_baggage("spinal_user_context"):
+                        current_baggage["spinal_user_context"] = user_context
+                except Exception as e:
+                    logger.debug(f"Could not extract baggage context: {e}")
+
+                # Merge span attributes with baggage context
+                combined_attributes = dict(span.attributes) if span.attributes else {}
+                if current_baggage:
+                    combined_attributes.update({f"baggage.{k}": v for k, v in current_baggage.items()})
+
                 span_dict = {
                     "name": span.name,
                     "trace_id": format(span.get_span_context().trace_id, "032x"),
@@ -63,7 +107,7 @@ class SpinalSpanExporter(SpanExporter):
                     "status": {"status_code": span.status.status_code.name, "description": span.status.description}
                     if span.status
                     else None,
-                    "attributes": dict(span.attributes) if span.attributes else {},
+                    "attributes": combined_attributes,
                     "events": [
                         {
                             "name": event.name,
@@ -115,20 +159,21 @@ class SpinalSpanExporter(SpanExporter):
         self._shutdown = True
 
 
-class SpinalSpanProcessor(SpanProcessor):
+class SpinalSpanProcessor(BatchSpanProcessor):
     """Processes spans and forwards them to the custom exporter"""
 
-    def __init__(self, exporter: SpinalSpanExporter):
-        self.exporter = exporter
-        self._lock = Lock()
-        self._span_buffer: list[ReadableSpan] = []
+    def __init__(self, config: SpinalConfig | None = None, **kwargs):
+        if not config:
+            config = SpinalConfig()
+
+        self.exporter = SpinalSpanExporter(config)
+        super().__init__(self.exporter, **kwargs)
 
     def _should_process(self, span: ReadableSpan | Span) -> bool:
         gen_ai_span = span.attributes.get("gen_ai.system") is not None
         billing_event = span.name == BILLING_EVENT_SPAN_NAME
-        user_span = span.name == USER_CONTEXT_SPAN_NAME
 
-        if any([gen_ai_span, billing_event, user_span]):
+        if any([gen_ai_span, billing_event]):
             return True
 
         logger.debug(f"Skipping span {span.name} - not a relevant spinal span")
@@ -150,182 +195,19 @@ class SpinalSpanProcessor(SpanProcessor):
         """Called when a span is ended - this is where we intercept"""
         if not self._should_process(span):
             return
-
-        with self._lock:
-            self._span_buffer.append(span)
-
-            # Export immediately (no batching)
-            # For simplicity, we'll export immediately
-            result = self.exporter.export([span])
-            if result == SpanExportResult.SUCCESS:
-                self._span_buffer.clear()
+        self._batch_processor.emit(span)
 
     def shutdown(self) -> None:
         """Shutdown the processor"""
-        # Export any remaining spans
-        with self._lock:
-            if self._span_buffer:
-                self.exporter.export(self._span_buffer)
-                self._span_buffer.clear()
-        self.exporter.shutdown()
-
-    def force_flush(self, timeout_millis: int = 30000) -> bool:
-        """Force flush any pending spans"""
-        with self._lock:
-            if self._span_buffer:
-                result = self.exporter.export(self._span_buffer)
-                if result == SpanExportResult.SUCCESS:
-                    self._span_buffer.clear()
-                    return True
-        return False
+        super().shutdown()
 
 
-class SpanInterceptor:
-    """Main class for intercepting spans"""
-
-    _instance = None
-    _lock = Lock()
-
-    def __new__(cls):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-        return cls._instance
-
-    def __init__(self):
-        if not hasattr(self, "_initialized"):
-            self._initialized = True
-            self._processors: list[SpinalSpanProcessor] = []
-            self._attached = False
-
-    def attach_to_provider(
-        self, *, endpoint: str, headers: typing.Optional[dict[str, str]] = None, api_key: str
-    ) -> bool:
-        """
-        Attach custom span processor to existing TracerProvider
-
-        Args:
-            endpoint: HTTP endpoint to send spans to
-            headers: Optional headers for the HTTP request
-            api_key: Optional API key for authentication
-
-        Returns:
-            bool: True if successfully attached, False otherwise
-        """
-        try:
-            tracer_provider = trace.get_tracer_provider()
-
-            # Check for open telemetry providers
-            if hasattr(tracer_provider, "add_span_processor"):
-                exporter = SpinalSpanExporter(endpoint, headers)
-                processor = SpinalSpanProcessor(exporter)
-
-                # Add processor to provider - this processor will handle ALL spans from instrumentation tools
-                tracer_provider.add_span_processor(processor)
-
-                self._processors.append(processor)
-                self._attached = True
-
-                # Register shutdown handler
-                atexit.register(self._shutdown)
-
-                logger.info(f"Successfully attached span interceptor to TracerProvider. Endpoint: {endpoint}")
-                return True
-            else:
-                logger.warning(
-                    "Current TracerProvider doesn't support adding processors. "
-                    "Make sure OpenTelemetry SDK is properly initialized."
-                )
-                return False
-
-        except Exception as e:
-            logger.error(f"Failed to attach span interceptor: {e}")
-            return False
-
-    def _shutdown(self):
-        """Cleanup on exit"""
-        for processor in self._processors:
-            try:
-                processor.shutdown()
-            except Exception as e:
-                logger.error(f"Error shutting down processor: {e}")
-
-    def is_attached(self) -> bool:
-        """Check if interceptor is attached to a provider"""
-        return self._attached
-
-
-# Singleton instance
-_interceptor = SpanInterceptor()
-
-
-def init(
-    *, endpoint: str = "", headers: typing.Optional[dict[str, str]] = None, api_key: str = "", log_level: str = "INFO"
-) -> SpanInterceptor:
-    """
-    Initialize the span interceptor
-
-    Args:
-        endpoint: HTTP endpoint to send spans to
-        headers: Optional headers for the HTTP request
-        log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
-
-    Returns:
-        SpanInterceptor instance
-
-    Example:
-        import sp_obs
-
-        # Initialize and auto-attach
-        sp_obs.init("https://my-observability-endpoint.com/spans",
-                   headers={"Authorization": "Bearer token"})
-    """
-    logging.basicConfig(level=getattr(logging, log_level.upper()))
-
-    if not api_key:
-        api_key = os.getenv("SPINAL_API_KEY", "")
-
-    if not endpoint:
-        endpoint = os.getenv("SPINAL_TRACING_ENDPOINT", "")
-
-    _interceptor.attach_to_provider(endpoint=endpoint, headers=headers, api_key=api_key)
-
-    return _interceptor
-
-
-def is_attached() -> bool:
-    """Check if the interceptor is attached"""
-    return _interceptor.is_attached()
-
-
-def add_user_context(mapped_user_id: str, attributes: typing.Optional[dict[str, typing.Any]] = None):
-    """
-    Add user context directly to the current span and all child spans
-
-    Args:
-        mapped_user_id: The user identifier to propagate
-        attributes: Optional dictionary of additional user attributes
-    """
-    current_span = trace.get_current_span()
-    if not current_span or current_span == trace.INVALID_SPAN:
-        logger.warning("No active span found - user context will not be attached")
-        return
-
-    trace_id = current_span.get_span_context().trace_id
-    with _BRIDGE_LOCK:
-        _USER_DATA_BRIDGE[str(trace_id)] = {
-            "id": mapped_user_id,
-            **(attributes or {}),
-        }
-
-
-def add_as_billable(attributes: typing.Optional[dict[str, typing.Any]] = None):
+def spinal_add_as_billable(attributes: typing.Optional[dict[str, typing.Any]] = None):
     """
     Add information on the trace that allows us to track it across our billing engine
     """
     tracer = trace.get_tracer(__name__)
-    with tracer.start_as_current_span("spinal_billable_event") as billing_span:
+    with tracer.start_as_current_span(BILLING_EVENT_SPAN_NAME) as billing_span:
         # Mark this as a billable span
         trace_id = billing_span.get_span_context().trace_id
 
@@ -341,53 +223,17 @@ def add_as_billable(attributes: typing.Optional[dict[str, typing.Any]] = None):
         logger.debug(f"Created billable event span with attributes: {attributes}")
 
 
-def spinal_tag_workflow(workflow_id: typing.Union[int, str, uuid.UUID]) -> typing.Callable:
+def spinal_add_context(*, workflow_id: typing.Union[int, str, uuid.UUID], user_id: typing.Union[int, str, uuid.UUID]):
     """
-    Decorator to tag spans with a workflow ID
-
-    Args:
-        workflow_id: The workflow identifier to attach to the trace context
-
-    Example:
-        @spinal_tag_workflow(workflow_id=12345)
-        @app.post("/ask")
-        async def ask_question(request: QuestionRequest):
-            pass
+    Utility function to allow a user to add context to a trace so that spinal can trace what is happening across the stack.
+    Baggage will need to be set here so that distributed tracking can take effect.
     """
+    # Set workflow_id in baggage
+    ctx = baggage.set_baggage("workflow_id", str(workflow_id))
 
-    def _add_workflow_to_context() -> context.Token:
-        current_span = trace.get_current_span()
-        trace_id = current_span.get_span_context().trace_id if current_span else None
+    # Set user context in baggage (directly, no bridge needed)
+    user_info = {"id": str(user_id)}
+    ctx = baggage.set_baggage("spinal_user_context", user_info, ctx)
 
-        ctx = baggage.set_baggage("workflow_id", str(workflow_id))
-        user_info = _USER_DATA_BRIDGE.get(str(trace_id))
-
-        return context.attach(baggage.set_baggage("spinal_user_context", user_info, ctx))
-
-    def decorator(func: typing.Callable) -> typing.Callable:
-        @functools.wraps(func)
-        async def async_wrapper(*args, **kwargs):
-            token = _add_workflow_to_context()
-            try:
-                return await func(*args, **kwargs)
-            finally:
-                context.detach(token)
-
-                trace_id = trace.get_current_span().get_span_context().trace_id
-                with _BRIDGE_LOCK:
-                    _USER_DATA_BRIDGE.pop(str(trace_id), None)
-
-        @functools.wraps(func)
-        def sync_wrapper(*args, **kwargs):
-            token = context.attach(baggage.set_baggage("workflow_id", str(workflow_id)))
-            try:
-                return func(*args, **kwargs)
-            finally:
-                context.detach(token)
-
-        if asyncio.iscoroutinefunction(func):
-            return async_wrapper
-        else:
-            return sync_wrapper
-
-    return decorator
+    # Attach context and return token for cleanup
+    return context.attach(ctx)
