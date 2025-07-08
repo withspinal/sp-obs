@@ -3,6 +3,7 @@ from .provider import (
     SpinalSpanProcessor,
     spinal_add_context,
     spinal_add_as_billable,
+    configure_for_openai_agents,
 )
 
 __all__ = [
@@ -10,4 +11,5 @@ __all__ = [
     "SpinalSpanProcessor",
     "spinal_add_context",
     "spinal_add_as_billable",
+    "configure_for_openai_agents",
 ]
