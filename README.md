@@ -1,6 +1,14 @@
-# sp-obs
+# SP-OBS: Spinal OpenTelemetry Integration
 
-Spinal Observability integration for Python applications. This library provides a custom OpenTelemetry span processor that integrates seamlessly with observability frameworks like Pydantic Logfire.
+SP-OBS is an OpenTelemetry span interceptor that automatically attaches to existing TracerProvider instances to duplicate AI/LLM spans to custom endpoints for billing and monitoring.
+
+## Features
+
+- Automatically intercepts AI/LLM spans (e.g., from OpenAI, Anthropic)
+- Seamlessly integrates with existing OpenTelemetry setups
+- Works with Logfire, vanilla OpenTelemetry, or any OTEL-compatible framework
+- Adds user and workflow context to spans for better tracking
+- Selective span processing - only sends relevant AI/billing spans
 
 ## Installation
 
@@ -8,111 +16,177 @@ Spinal Observability integration for Python applications. This library provides 
 pip install sp-obs
 ```
 
-## Usage with Logfire
+## Quick Start
 
-The recommended way to use sp-obs is by integrating it with Pydantic Logfire's `additional_span_processors`:
+### With Existing OpenTelemetry Setup
+
+If you already have OpenTelemetry configured (e.g., via Logfire, manual setup, or auto-instrumentation):
+
+```python
+from sp_obs import spinal_attach
+
+# Simply attach to the existing TracerProvider
+spinal_attach()
+```
+
+### With Logfire
 
 ```python
 import logfire
-from sp_obs import SpinalSpanProcessor, SpinalConfig
+from sp_obs import spinal_attach
 
-# Configure Spinal
-spinal_config = SpinalConfig(
-    endpoint="https://your-spinal-endpoint.com/spans",
-    api_key="your-api-key"  # or set SPINAL_API_KEY env var
-)
+# Configure logfire without sending to their backend
+logfire.configure(send_to_logfire=False)
 
-# Initialize logfire with Spinal processor
-logfire.configure(
-    additional_span_processors=[SpinalSpanProcessor(spinal_config)],
-    # other logfire configuration...
+# Attach Spinal processor
+spinal_attach()
+
+# Use logfire instrumentation as normal
+logfire.instrument_openai()
+```
+
+### Without Any OpenTelemetry Setup
+
+```python
+from sp_obs import spinal_attach
+
+# Initialize OpenTelemetry and attach Spinal
+spinal_attach(init_otel_if_needed=True, service_name="my-service")
+```
+
+### Manual Configuration
+
+For more control, you can manually create and add the processor:
+
+```python
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from sp_obs import SpinalConfig, SpinalSpanProcessor
+
+# Set up OpenTelemetry
+provider = TracerProvider()
+trace.set_tracer_provider(provider)
+
+# Configure and add Spinal processor
+config = SpinalConfig(
+    endpoint="https://your-endpoint.com/spans",
+    api_key="your-api-key"
 )
+processor = SpinalSpanProcessor(config)
+provider.add_span_processor(processor)
 ```
 
 ## Configuration
 
 ### Environment Variables
 
-- `SPINAL_API_KEY`: Your Spinal API key
-- `SPINAL_TRACING_ENDPOINT`: The Spinal tracing endpoint URL
+- `SPINAL_TRACING_ENDPOINT`: HTTP endpoint to send spans to
+- `SPINAL_API_KEY`: API key for authentication
 
 ### SpinalConfig Options
 
-- `endpoint`: HTTP endpoint to send spans to (required)
-- `api_key`: API key for authentication (required)
-- `headers`: Optional custom headers for the HTTP request
-- `timeout`: Request timeout in seconds (default: 30)
-- `batch_size`: Batch size for span export (default: 100)
-
-## Features
-
-### Context Management
-
-Add both workflow and user context to traces for comprehensive tracking:
-
 ```python
-from sp_obs import spinal_add_context
-
-# Add workflow and user context to current trace
-token = spinal_add_context(workflow_id=12345, user_id="user123")
-# Your traced operations here
-# Optionally detach context when done
-context.detach(token)
-```
-
-### User Context
-
-Add user context to spans for better tracking:
-
-```python
-from sp_obs import add_user_context
-
-# In your request handler
-add_user_context(
-    mapped_user_id="user123",
-    attributes={"plan": "premium", "region": "us-west"}
+config = SpinalConfig(
+    endpoint="https://your-endpoint.com/spans",  # Required
+    api_key="your-api-key",                      # Required
+    headers={"Custom-Header": "value"},          # Optional custom headers
+    timeout=5,                                   # Request timeout in seconds
+    batch_size=100                               # Batch size for span export
 )
 ```
 
-### Billable Events
+## Adding Context to Traces
 
-Mark specific operations as billable:
+Add user and workflow context that will be attached to all relevant spans:
 
 ```python
-from sp_obs import add_as_billable
+from sp_obs import spinal_add_context, spinal_add_as_billable
 
-# Mark an operation as billable
-add_as_billable(attributes={
-    "operation": "api_call",
-    "credits_used": 10
+# Add context for tracking
+context_token = spinal_add_context(
+    workflow_id="workflow-123",
+    user_id="user-456"
+)
+
+# Your AI/LLM operations here...
+
+# Mark specific operations as billable
+spinal_add_as_billable({
+    "operation": "text_generation",
+    "model": "gpt-4",
+    "tokens": 1500
 })
 ```
 
-## What Gets Tracked
-
-The SpinalSpanProcessor automatically tracks:
-- Spans with `gen_ai.system` attribute (AI/LLM operations)
-- Billable events (marked with `spinal_add_as_billable`)
-- User context spans
-- Spans with workflow_id and user context from baggage
-
-## Migration from Legacy API
-
-If you're using the old `sp_obs.init()` approach, migrate to the new API:
+## Checking TracerProvider Status
 
 ```python
-# Old (deprecated)
-import sp_obs
-sp_obs.init(endpoint="...", api_key="...")
+from sp_obs import is_tracer_provider_configured
 
-# New (recommended)
+if is_tracer_provider_configured():
+    print("OpenTelemetry is already configured")
+else:
+    print("No TracerProvider configured")
+```
+
+## What Spans Are Captured?
+
+SP-OBS automatically captures:
+- AI/LLM spans (identified by `gen_ai.system` attribute)
+- Explicitly created billing event spans
+- Spans with attached user/workflow context
+
+All other spans are ignored to minimize overhead and data transfer.
+
+## Integration Examples
+
+### FastAPI with Logfire
+
+```python
+from fastapi import FastAPI
 import logfire
-from sp_obs import SpinalSpanProcessor, SpinalConfig
+from sp_obs import spinal_attach, spinal_add_context
 
-config = SpinalConfig(endpoint="...", api_key="...")
-logfire.configure(additional_span_processors=[SpinalSpanProcessor(config)])
+app = FastAPI()
+
+# Configure observability
+logfire.configure(send_to_logfire=False)
+spinal_attach()
+logfire.instrument_openai()
+
+@app.post("/generate")
+async def generate(user_id: str, workflow_id: str):
+    # Add context for this request
+    token = spinal_add_context(
+        user_id=user_id,
+        workflow_id=workflow_id
+    )
+    
+    # Your OpenAI call here - automatically tracked
+    response = await openai_client.chat.completions.create(...)
+    return response
+```
+
+### Standalone Script
+
+```python
+from openai import OpenAI
+from sp_obs import spinal_attach, spinal_add_context
+
+# Initialize with automatic OTEL setup
+spinal_attach(init_otel_if_needed=True)
+
+# Add context
+spinal_add_context(user_id="test-user", workflow_id="batch-job-1")
+
+# Use OpenAI - spans automatically captured
+client = OpenAI()
+response = client.chat.completions.create(
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
 ```
 
 ## License
 
-MIT License - see LICENSE file for details.
+[Your License Here]

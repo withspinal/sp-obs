@@ -8,12 +8,13 @@ import contextvars
 import logging
 import uuid
 import requests
-from opentelemetry import trace, context, baggage
+from opentelemetry import trace, baggage
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 import os
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import Span
+from logfire import set_baggage
 
 logger = logging.getLogger(__name__)
 
@@ -184,13 +185,6 @@ class SpinalSpanProcessor(BatchSpanProcessor):
         if not self._should_process(span):
             return
 
-        if user_context := baggage.get_baggage("spinal_user_context"):
-            for key, value in user_context.items():
-                span.set_attribute(f"spinal_user.{key}", value)
-
-        if workflow_id := baggage.get_baggage("workflow_id"):
-            span.set_attribute("workflow_id", str(workflow_id))
-
     def on_end(self, span: ReadableSpan) -> None:
         """Called when a span is ended - this is where we intercept"""
         if not self._should_process(span):
@@ -228,12 +222,35 @@ def spinal_add_context(*, workflow_id: typing.Union[int, str, uuid.UUID], user_i
     Utility function to allow a user to add context to a trace so that spinal can trace what is happening across the stack.
     Baggage will need to be set here so that distributed tracking can take effect.
     """
-    # Set workflow_id in baggage
-    ctx = baggage.set_baggage("workflow_id", str(workflow_id))
 
-    # Set user context in baggage (directly, no bridge needed)
-    user_info = {"id": str(user_id)}
-    ctx = baggage.set_baggage("spinal_user_context", user_info, ctx)
+    baggage_to_add = {"workflow_id": str(workflow_id), "spinal_user_context.id": user_id}
+    return set_baggage(**baggage_to_add)
 
-    # Attach context and return token for cleanup
-    return context.attach(ctx)
+
+def _init_logfire(api_key: str | None = None, tracing_endpoint: str | None = None):
+    import logfire
+
+    if logfire.DEFAULT_LOGFIRE_INSTANCE.config._initialized:
+        logger.debug("Logfire is already initialized - attaching Spinal span processor")
+        tracing_provider = logfire.DEFAULT_LOGFIRE_INSTANCE.config.get_tracer_provider()
+        tracing_provider.add_span_processor(
+            SpinalSpanProcessor(SpinalConfig(endpoint=tracing_endpoint, api_key=api_key))
+        )
+        return
+
+    else:
+        logfire.configure(
+            send_to_logfire=True,
+            additional_span_processors=[SpinalSpanProcessor(SpinalConfig(endpoint=tracing_endpoint, api_key=api_key))],
+        )
+
+
+def configure_for_openai_agents(api_key: str | None = None, tracing_endpoint: str | None = None):
+    """
+    Configure Spinal to trace OpenAI agents
+    """
+    import logfire
+
+    _init_logfire(api_key=api_key, tracing_endpoint=tracing_endpoint)
+
+    logfire.instrument_openai_agents()
