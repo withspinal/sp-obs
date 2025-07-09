@@ -240,7 +240,7 @@ def _init_logfire(api_key: str | None = None, tracing_endpoint: str | None = Non
 
     else:
         logfire.configure(
-            send_to_logfire=True,
+            send_to_logfire=False,
             additional_span_processors=[SpinalSpanProcessor(SpinalConfig(endpoint=tracing_endpoint, api_key=api_key))],
         )
 
