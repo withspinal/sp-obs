@@ -8,7 +8,7 @@ import contextvars
 import logging
 import uuid
 import requests
-from opentelemetry import trace, baggage
+from opentelemetry import trace
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 import os
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Create a context key for user data that propagates with traces
 TRACE_CONTEXT = contextvars.ContextVar("spinal_context", default={})
+SPINAL_NAMESPACE = "spinal"
 
 
 class SpinalConfig:
@@ -77,27 +78,9 @@ class SpinalSpanExporter(SpanExporter):
             return SpanExportResult.FAILURE
 
         try:
-            # Convert spans to JSON-serializable format
+            # NOTE -> Baggage is automatically merged into Span attributes by opentel.
             span_data = []
             for span in spans:
-                # Extract baggage context from the current context
-                current_baggage = {}
-                try:
-                    # Get workflow_id from baggage if available
-                    if workflow_id := baggage.get_baggage("workflow_id"):
-                        current_baggage["workflow_id"] = workflow_id
-
-                    # Get user context from baggage if available
-                    if user_context := baggage.get_baggage("spinal_user_context"):
-                        current_baggage["spinal_user_context"] = user_context
-                except Exception as e:
-                    logger.debug(f"Could not extract baggage context: {e}")
-
-                # Merge span attributes with baggage context
-                combined_attributes = dict(span.attributes) if span.attributes else {}
-                if current_baggage:
-                    combined_attributes.update({f"baggage.{k}": v for k, v in current_baggage.items()})
-
                 span_dict = {
                     "name": span.name,
                     "trace_id": format(span.get_span_context().trace_id, "032x"),
@@ -108,7 +91,7 @@ class SpinalSpanExporter(SpanExporter):
                     "status": {"status_code": span.status.status_code.name, "description": span.status.description}
                     if span.status
                     else None,
-                    "attributes": combined_attributes,
+                    "attributes": dict(span.attributes),
                     "events": [
                         {
                             "name": event.name,
@@ -131,7 +114,6 @@ class SpinalSpanExporter(SpanExporter):
                     ]
                     if span.links
                     else [],
-                    "resource": dict(span.resource.attributes) if span.resource else {},
                     "instrumentation_info": {
                         "name": span.instrumentation_scope.name,
                         "version": span.instrumentation_scope.version,
@@ -196,7 +178,9 @@ class SpinalSpanProcessor(BatchSpanProcessor):
         super().shutdown()
 
 
-def spinal_add_as_billable(attributes: typing.Optional[dict[str, typing.Any]] = None):
+def spinal_add_as_billable(
+    attributes: typing.Optional[dict[str, typing.Any]] = None, aggregation_id: typing.Union[int, str, uuid.UUID] = None
+):
     """
     Add information on the trace that allows us to track it across our billing engine
     """
@@ -207,6 +191,7 @@ def spinal_add_as_billable(attributes: typing.Optional[dict[str, typing.Any]] = 
 
         billing_span.set_attribute("billable", True)
         billing_span.set_attribute("billing_trace_id", format(trace_id, "032x"))
+        billing_span.set_attribute("billing_aggregation_id", str(aggregation_id) if aggregation_id else "")
 
         # Add any custom attributes
         if attributes:
@@ -217,13 +202,24 @@ def spinal_add_as_billable(attributes: typing.Optional[dict[str, typing.Any]] = 
         logger.debug(f"Created billable event span with attributes: {attributes}")
 
 
-def spinal_add_context(*, workflow_id: typing.Union[int, str, uuid.UUID], user_id: typing.Union[int, str, uuid.UUID]):
+def spinal_add_context(
+    *,
+    workflow_id: typing.Union[int, str, uuid.UUID],
+    user_id: typing.Union[int, str, uuid.UUID],
+    aggregation_id: typing.Union[int, str, uuid.UUID] = None,
+):
     """
     Utility function to allow a user to add context to a trace so that spinal can trace what is happening across the stack.
     Baggage will need to be set here so that distributed tracking can take effect.
+    The aggregation id is an optional id given that aggregates traces together.
     """
 
-    baggage_to_add = {"workflow_id": str(workflow_id), "spinal_user_context.id": user_id}
+    baggage_to_add = {
+        f"{SPINAL_NAMESPACE}.workflow_id": str(workflow_id),
+        f"{SPINAL_NAMESPACE}.user_context.id": user_id,
+    }
+    if aggregation_id:
+        baggage_to_add[f"{SPINAL_NAMESPACE}.aggregation_id"] = str(aggregation_id)
     return set_baggage(**baggage_to_add)
 
 
