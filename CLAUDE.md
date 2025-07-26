@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`sp-obs` is an OpenTelemetry span interceptor that automatically attaches to existing TracerProvider instances to duplicate AI/LLM spans to custom endpoints for billing and monitoring. It works by intercepting spans from any OpenTelemetry-instrumented application and selectively forwarding AI/LLM operations, billable events, and user-contextualized spans.
+`sp-obs` is Spinal's cost tracking library built on top of OpenTelemetry. It works by adding isolated tracers to libraries that haven't been instrumented and attaching a processor to libraries that already have instrumentation. This dual approach allows it to integrate seamlessly with existing observability setups while selectively forwarding AI/LLM operations and billing events to Spinal's platform.
 
 ## Development Commands
 
@@ -44,9 +44,11 @@ pre-commit run --all-files
 # Build the package (uses hatchling)
 python -m build
 
-# This creates:
-# - dist/sp_obs-{version}-py3-none-any.whl
-# - dist/sp_obs-{version}.tar.gz
+# Upload to TestPyPI for testing
+python -m twine upload --repository testpypi dist/*
+
+# Upload to PyPI for release
+python -m twine upload dist/*
 ```
 
 ## Architecture and Key Components
@@ -55,51 +57,59 @@ python -m build
 The library uses an **interceptor pattern** to attach to existing OpenTelemetry TracerProvider instances, avoiding the need for users to modify their existing observability setup.
 
 ### File Structure
-- `src/sp_obs/provider.py`: All core implementation (SpinalConfig, SpinalSpanProcessor, SpinalSpanExporter)
-- `src/sp_obs/__init__.py`: Public API exports and utility functions
+- `src/sp_obs/provider.py`: Context management functions (`add_context`, `spinal_add_as_billable`)
+- `src/sp_obs/__init__.py`: Public API exports
+- `src/sp_obs/_internal/processor.py`: SpinalSpanProcessor implementation
+- `src/sp_obs/_internal/exporter.py`: SpinalSpanExporter (singleton with httpx session)
+- `src/sp_obs/_internal/config.py`: Configuration management
+- `src/sp_obs/_internal/providers/`: Provider-specific instrumentations (OpenAI, Anthropic, etc.)
 
 ### Key Classes
 
-1. **SpinalConfig**: Configuration container
+1. **SpinalConfig** (`_internal/config.py`): Configuration container
    - Environment variables: `SPINAL_TRACING_ENDPOINT`, `SPINAL_API_KEY`
-   - Defaults: timeout=5s, batch_size=100
-   - Supports custom headers for authentication
+   - Batch processing vars: `SPINAL_PROCESS_MAX_QUEUE_SIZE`, `SPINAL_PROCESS_SCHEDULE_DELAY`, etc.
+   - Defaults: timeout=5s, max_queue_size=2048, batch_size=512
+   - Includes scrubber support for sensitive data redaction
 
-2. **SpinalSpanProcessor** (extends BatchSpanProcessor):
-   - Implements `_should_process()` for selective filtering
-   - Filters by: `gen_ai.system` attribute, billable events, user context
-   - Overrides `on_end()` to intercept span completion
-   - Automatically enriches spans with baggage context
+2. **SpinalSpanProcessor** (`_internal/processor.py`, extends BatchSpanProcessor):
+   - Implements `_should_process()` with SpanType enum-based filtering
+   - Filters: AI providers (OpenAI, Anthropic), HTTPX requests (excluding AI endpoints)
+   - Captures baggage in `on_start()` to preserve context across thread boundaries
+   - Uses `_batch_processor.emit()` to bypass sampling
 
-3. **SpinalSpanExporter** (implements SpanExporter):
-   - Converts OTEL spans to JSON format
-   - HTTP POST with configurable timeout
-   - Preserves all span attributes including baggage
+3. **SpinalSpanExporter** (`_internal/exporter.py`, implements SpanExporter):
+   - Singleton pattern with thread-safe initialization
+   - Reuses httpx.Client session for efficiency
+   - Converts spans to JSON with full attribute preservation
+   - Applies configured scrubber before export
 
 ### Public API Functions
 
-- `spinal_attach()`: Auto-attaches to existing or new TracerProvider
-- `spinal_add_context()`: Adds workflow_id and user_id to baggage
+- `configure()`: Set up global configuration
+- `add_context()`: Context manager for adding workflow_id/user_id to baggage
 - `spinal_add_as_billable()`: Creates billable event spans
-- `configure_for_openai_agents()`: Logfire + OpenAI helper
+- `instrument_openai()`, `instrument_anthropic()`, etc.: Provider instrumentations
+- `shutdown()`, `force_flush()`: Cleanup utilities
 
 ### Context Propagation
 
 Uses OpenTelemetry baggage for distributed tracing:
-- Baggage keys: `workflow_id`, `user`
+- Baggage keys: `spinal.workflow_id`, `spinal.user_context.id`, `spinal.aggregation_id`
+- Baggage captured in `on_start()` due to thread boundary between app and export threads
 - Automatically propagates through HTTP headers (W3C format)
-- Context preserved across service boundaries
+- Context manager pattern ensures proper attach/detach
 
 ## Important Considerations
 
-1. **No Test Suite**: Project ships without tests - verify changes manually against example integrations.
+1. **Thread Safety**: Baggage doesn't cross thread boundaries - captured in `on_start()` while context is available.
 
-2. **Selective Processing**: Only forwards spans matching specific criteria to minimize overhead and costs.
+2. **Selective Processing**: Only forwards AI/LLM spans and HTTPX requests (excluding AI provider endpoints).
 
-3. **Framework Agnostic**: While optimized for Logfire, must work with vanilla OpenTelemetry.
+3. **Singleton Exporter**: SpinalSpanExporter uses singleton pattern to reuse HTTP connections.
 
-4. **Interceptor Behavior**: Never interferes with existing span processors or exporters.
+4. **No Sampling**: Processor bypasses OTEL sampling by using `_batch_processor.emit()` directly.
 
-5. **Python 3.13+**: Uses modern Python features - no compatibility shims for older versions.
+5. **Python 3.11+**: Requires Python 3.11 or higher (per pyproject.toml).
 
-6. **Batch Processing**: Inherits BatchSpanProcessor behavior - spans exported in batches for efficiency.
+6. **Batch Processing**: Default 5-second flush interval or 512-span batch size, whichever comes first.

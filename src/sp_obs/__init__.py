@@ -1,15 +1,29 @@
 from .provider import (
-    SpinalConfig,
-    SpinalSpanProcessor,
-    spinal_add_context,
-    spinal_add_as_billable,
-    configure_for_openai_agents,
+    add_context,
 )
+from ._internal.config import (
+    SpinalConfig,
+    configure,
+    SpinalScrubber,
+)
+from ._internal.scrubbing import (
+    DefaultScrubber,
+    NoOpScrubber,
+)
+from ._internal.providers import instrument_openai, instrument_anthropic, instrument_requests, instrument_httpx
 
 __all__ = [
-    "SpinalConfig",
-    "SpinalSpanProcessor",
-    "spinal_add_context",
-    "spinal_add_as_billable",
-    "configure_for_openai_agents",
+    # Configuration
+    "configure",
+    # Instrumentation
+    "instrument_openai",
+    "instrument_anthropic",
+    "instrument_requests",
+    "instrument_httpx",
+    # Context and billing
+    "add_context",
+    # Scrubbing
+    "SpinalScrubber",
+    "DefaultScrubber",
+    "NoOpScrubber",
 ]
