@@ -1,10 +1,10 @@
 # SP-OBS: Spinal OpenTelemetry Integration
 
-SP-OBS is an OpenTelemetry span interceptor that automatically attaches to existing TracerProvider instances to duplicate AI/LLM spans to custom endpoints for billing and monitoring.
-
+SP-OBS is Spinal's cost tracking library built on top of open telemetry. It works by adding isolated tracers to libraries that have not been instrumented
+and attached a processor to libraries that aloready have been instrumented. 
+This means we can also play nice with other observability libraries out there. 
 ## Features
 
-- Automatically intercepts AI/LLM spans (e.g., from OpenAI, Anthropic)
 - Seamlessly integrates with existing OpenTelemetry setups
 - Works with Logfire, vanilla OpenTelemetry, or any OTEL-compatible framework
 - Adds user and workflow context to spans for better tracking
@@ -16,123 +16,144 @@ SP-OBS is an OpenTelemetry span interceptor that automatically attaches to exist
 pip install sp-obs
 ```
 
+### With AI Provider Support
+
+```bash
+# For OpenAI support
+pip install sp-obs[openai]
+
+# For Anthropic support  
+pip install sp-obs[anthropic]
+
+# For all providers
+pip install sp-obs[all]
+```
+
 ## Quick Start
 
-### With Existing OpenTelemetry Setup
+### Configuration
 
-If you already have OpenTelemetry configured (e.g., via Logfire, manual setup, or auto-instrumentation):
-
-```python
-from sp_obs import spinal_attach
-
-# Simply attach to the existing TracerProvider
-spinal_attach()
-```
-
-### With Logfire
+First, configure SP-OBS with your endpoint and API key:
 
 ```python
-import logfire
-from sp_obs import spinal_attach
+import sp_obs
 
-# Configure logfire without sending to their backend
-logfire.configure(send_to_logfire=False)
-
-# Attach Spinal processor
-spinal_attach()
-
-# Use logfire instrumentation as normal
-logfire.instrument_openai()
-```
-
-### Without Any OpenTelemetry Setup
-
-```python
-from sp_obs import spinal_attach
-
-# Initialize OpenTelemetry and attach Spinal
-spinal_attach(init_otel_if_needed=True, service_name="my-service")
-```
-
-### Manual Configuration
-
-For more control, you can manually create and add the processor:
-
-```python
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from sp_obs import SpinalConfig, SpinalSpanProcessor
-
-# Set up OpenTelemetry
-provider = TracerProvider()
-trace.set_tracer_provider(provider)
-
-# Configure and add Spinal processor
-config = SpinalConfig(
+# Configure globally (recommended)
+sp_obs.configure(
     endpoint="https://your-endpoint.com/spans",
     api_key="your-api-key"
 )
-processor = SpinalSpanProcessor(config)
-provider.add_span_processor(processor)
 ```
 
-## Configuration
+Or use environment variables:
+- `SPINAL_TRACING_ENDPOINT`
+- `SPINAL_API_KEY`
+
+### Instrumenting AI Providers
+
+```python
+import sp_obs
+
+# Configure SP-OBS
+sp_obs.configure()
+
+# Instrument providers
+sp_obs.instrument_openai()
+sp_obs.instrument_anthropic()
+sp_obs.instrument_httpx()
+sp_obs.instrument_requests()
+```
+
+### Adding Context to Traces
+
+Use the context manager to add user and workflow information:
+
+```python
+import sp_obs
+
+# Add context using context manager
+with sp_obs.add_context(
+    workflow_id="workflow-123",
+    user_id="user-456",
+    aggregation_id="session-789"  # optional
+):
+    # All spans created here will have this context
+    response = client.chat.completions.create(...)
+```
+
+## Configuration Options
 
 ### Environment Variables
 
 - `SPINAL_TRACING_ENDPOINT`: HTTP endpoint to send spans to
 - `SPINAL_API_KEY`: API key for authentication
+- `SPINAL_PROCESS_MAX_QUEUE_SIZE`: Max spans in queue (default: 2048)
+- `SPINAL_PROCESS_SCHEDULE_DELAY`: Export delay in ms (default: 5000)
+- `SPINAL_PROCESS_MAX_EXPORT_BATCH_SIZE`: Batch size (default: 512)
+- `SPINAL_PROCESS_EXPORT_TIMEOUT`: Export timeout in ms (default: 30000)
 
-### SpinalConfig Options
+### Advanced Configuration
 
 ```python
-config = SpinalConfig(
-    endpoint="https://your-endpoint.com/spans",  # Required
-    api_key="your-api-key",                      # Required
-    headers={"Custom-Header": "value"},          # Optional custom headers
-    timeout=5,                                   # Request timeout in seconds
-    batch_size=100                               # Batch size for span export
+sp_obs.configure(
+    endpoint="https://your-endpoint.com/spans",
+    api_key="your-api-key",
+    headers={"Custom-Header": "value"},
+    timeout=5,
+    max_queue_size=2048,
+    max_export_batch_size=512,
+    schedule_delay_millis=5000,
+    export_timeout_millis=30000,
+    scrubber=my_custom_scrubber  # Optional
 )
 ```
 
-## Adding Context to Traces
+## Data Scrubbing
 
-Add user and workflow context that will be attached to all relevant spans:
+SP-OBS includes automatic scrubbing of sensitive data:
 
 ```python
-from sp_obs import spinal_add_context, spinal_add_as_billable
+from sp_obs import DefaultScrubber, NoOpScrubber
 
-# Add context for tracking
-context_token = spinal_add_context(
-    workflow_id="workflow-123",
-    user_id="user-456"
-)
+# Use default scrubber (redacts tokens, keys, passwords)
+sp_obs.configure(scrubber=DefaultScrubber())
 
-# Your AI/LLM operations here...
+# Or disable scrubbing
+sp_obs.configure(scrubber=NoOpScrubber())
 
-# Mark specific operations as billable
-spinal_add_as_billable({
-    "operation": "text_generation",
-    "model": "gpt-4",
-    "tokens": 1500
-})
+# Or implement custom scrubbing
+class MyCustomScrubber:
+    def scrub_attributes(self, attributes: dict) -> dict:
+        # Your scrubbing logic
+        return attributes
+
+sp_obs.configure(scrubber=MyCustomScrubber())
 ```
 
-## Checking TracerProvider Status
+## Performance Considerations
+
+SP-OBS uses a BatchSpanProcessor to minimize performance impact:
+
+- Spans are batched and sent asynchronously in a background thread
+- Default batch size: 512 spans
+- Default flush interval: 5 seconds
+- Spans are dropped if queue exceeds max size (default: 2048)
+
+To tune for high-volume applications:
 
 ```python
-from sp_obs import is_tracer_provider_configured
-
-if is_tracer_provider_configured():
-    print("OpenTelemetry is already configured")
-else:
-    print("No TracerProvider configured")
+sp_obs.configure(
+    max_queue_size=5000,          # Increase queue size
+    max_export_batch_size=1000,   # Larger batches
+    schedule_delay_millis=2000    # More frequent exports
+)
 ```
 
 ## What Spans Are Captured?
 
 SP-OBS automatically captures:
 - AI/LLM spans (identified by `gen_ai.system` attribute)
+- HTTPX and request spans
 - Explicitly created billing event spans
 - Spans with attached user/workflow context
 
@@ -140,53 +161,32 @@ All other spans are ignored to minimize overhead and data transfer.
 
 ## Integration Examples
 
-### FastAPI with Logfire
+### FastAPI Application
 
 ```python
 from fastapi import FastAPI
-import logfire
-from sp_obs import spinal_attach, spinal_add_context
+import sp_obs
+from openai import AsyncOpenAI
 
 app = FastAPI()
+client = AsyncOpenAI()
 
-# Configure observability
-logfire.configure(send_to_logfire=False)
-spinal_attach()
-logfire.instrument_openai()
+# Configure on startup
+@app.on_event("startup")
+async def startup():
+    sp_obs.configure()
+    sp_obs.instrument_openai()
 
 @app.post("/generate")
 async def generate(user_id: str, workflow_id: str):
-    # Add context for this request
-    token = spinal_add_context(
-        user_id=user_id,
-        workflow_id=workflow_id
-    )
-    
-    # Your OpenAI call here - automatically tracked
-    response = await openai_client.chat.completions.create(...)
-    return response
-```
-
-### Standalone Script
-
-```python
-from openai import OpenAI
-from sp_obs import spinal_attach, spinal_add_context
-
-# Initialize with automatic OTEL setup
-spinal_attach(init_otel_if_needed=True)
-
-# Add context
-spinal_add_context(user_id="test-user", workflow_id="batch-job-1")
-
-# Use OpenAI - spans automatically captured
-client = OpenAI()
-response = client.chat.completions.create(
-    model="gpt-4",
-    messages=[{"role": "user", "content": "Hello!"}]
-)
+    with sp_obs.add_context(user_id=user_id, workflow_id=workflow_id):
+        response = await client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": "Hello"}]
+        )
+        return response
 ```
 
 ## License
 
-[Your License Here]
+MIT License - see LICENSE file for details.
