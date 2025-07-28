@@ -40,13 +40,13 @@ import sp_obs
 
 # Configure globally (recommended)
 sp_obs.configure(
-    endpoint="https://your-endpoint.com/spans",
     api_key="your-api-key"
+    # endpoint defaults to "https://cloud.withspinal.com" if not specified
 )
 ```
 
 Or use environment variables:
-- `SPINAL_TRACING_ENDPOINT`
+- `SPINAL_TRACING_ENDPOINT` (defaults to "https://cloud.withspinal.com")
 - `SPINAL_API_KEY`
 
 ### Instrumenting AI Providers
@@ -85,7 +85,7 @@ with sp_obs.add_context(
 
 ### Environment Variables
 
-- `SPINAL_TRACING_ENDPOINT`: HTTP endpoint to send spans to
+- `SPINAL_TRACING_ENDPOINT`: HTTP endpoint to send spans to (default: "https://cloud.withspinal.com")
 - `SPINAL_API_KEY`: API key for authentication
 - `SPINAL_PROCESS_MAX_QUEUE_SIZE`: Max spans in queue (default: 2048)
 - `SPINAL_PROCESS_SCHEDULE_DELAY`: Export delay in ms (default: 5000)
@@ -96,8 +96,8 @@ with sp_obs.add_context(
 
 ```python
 sp_obs.configure(
-    endpoint="https://your-endpoint.com/spans",
     api_key="your-api-key",
+    endpoint="https://cloud.withspinal.com",  # Optional - this is the default
     headers={"Custom-Header": "value"},
     timeout=5,
     max_queue_size=2048,
