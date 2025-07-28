@@ -52,7 +52,7 @@ class SpinalConfig:
         export_timeout_millis: float | None = None,
         scrubber: Optional[SpinalScrubber] = None,
     ):
-        self.endpoint = endpoint or environ.get("SPINAL_TRACING_ENDPOINT", "")
+        self.endpoint = endpoint or environ.get("SPINAL_TRACING_ENDPOINT") or "https://cloud.withspinal.com"
         self.api_key = api_key or environ.get("SPINAL_API_KEY", "")
         self.headers = headers or {}
         self.timeout = timeout
