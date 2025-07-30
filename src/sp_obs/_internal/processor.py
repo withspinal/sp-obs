@@ -77,6 +77,8 @@ class SpinalSpanProcessor(BatchSpanProcessor):
                     return SpanType.GEN_AI
                 case "openai":
                     return SpanType.GEN_AI
+                case "openai_agents":
+                    return SpanType.GEN_AI
                 case _:
                     return SpanType.UNKNOWN
 

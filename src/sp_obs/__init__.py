@@ -10,13 +10,20 @@ from ._internal.scrubbing import (
     DefaultScrubber,
     NoOpScrubber,
 )
-from ._internal.providers import instrument_openai, instrument_anthropic, instrument_requests, instrument_httpx
+from ._internal.providers import (
+    instrument_openai,
+    instrument_anthropic,
+    instrument_requests,
+    instrument_httpx,
+    instrument_openai_agents,
+)
 
 __all__ = [
     # Configuration
     "configure",
     # Instrumentation
     "instrument_openai",
+    "instrument_openai_agents",
     "instrument_anthropic",
     "instrument_requests",
     "instrument_httpx",
