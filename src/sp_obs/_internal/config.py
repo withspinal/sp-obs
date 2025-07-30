@@ -51,6 +51,7 @@ class SpinalConfig:
         schedule_delay_millis: float | None = None,
         export_timeout_millis: float | None = None,
         scrubber: Optional[SpinalScrubber] = None,
+        opentelemetry_log_level: str = logging.ERROR,
     ):
         self.endpoint = endpoint or environ.get("SPINAL_TRACING_ENDPOINT") or "https://cloud.withspinal.com"
         self.api_key = api_key or environ.get("SPINAL_API_KEY", "")
@@ -70,6 +71,10 @@ class SpinalConfig:
 
         if not self.api_key:
             raise ValueError("No API key provided. Set via parameter or SPINAL_API_KEY env var")
+
+        if not opentelemetry_log_level:
+            opentelemetry_log_level = environ.get("OTEL_PYTHON_LOG_LEVEL", logging.ERROR)
+        logging.getLogger("opentelemetry").setLevel(opentelemetry_log_level)
 
     @staticmethod
     def _default_max_queue_size():
