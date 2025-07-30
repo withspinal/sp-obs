@@ -17,7 +17,6 @@ class DefaultScrubber:
         r"encryption[._-]?key",
         r"bearer",
         r"credential",
-        r"\bname\b",  # \b specifies word boundaries, so exact matching for 'name'
         r"user[._-]?name",
         r"first[._-]?name",
         r"last[._-]?name",

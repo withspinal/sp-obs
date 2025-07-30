@@ -56,7 +56,6 @@ class TestDefaultScrubber(unittest.TestCase):
         scrubbed = self.scrubber.scrub_attributes(attributes)
 
         # Check nested values are scrubbed
-        self.assertIn("[Scrubbed", scrubbed["user"]["name"])
         self.assertIn("[Scrubbed", scrubbed["user"]["password"])
         self.assertIn("[Scrubbed", scrubbed["user"]["profile"]["api_key"])
         self.assertIn("[Scrubbed", scrubbed["user"]["profile"]["email"])

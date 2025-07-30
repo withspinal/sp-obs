@@ -1,6 +1,8 @@
 import logging
+import orjson
+
 import httpx
-from typing import Optional
+from typing import Any, Optional
 
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExportResult, SpanExporter
@@ -39,6 +41,8 @@ class SpinalSpanExporter(SpanExporter):
             span_data = []
             for span in spans:
                 attributes = dict(span.attributes)
+                attributes = self.remove_traceloop_entity_output(attributes)
+                attributes.pop("traceloop.entity.input", None)
                 if self.config.scrubber:
                     attributes = self.config.scrubber.scrub_attributes(attributes)
 
@@ -96,6 +100,35 @@ class SpinalSpanExporter(SpanExporter):
         except Exception as e:
             logger.error(f"Error exporting spans: {e}")
             return SpanExportResult.FAILURE
+
+    def remove_traceloop_entity_output(self, attributes: dict[str, Any]) -> dict[str, Any]:
+        """
+        From the attributes dictionary, fetch the traceloop.entity.output attribute.
+        The entity output is a JSON string. It contains some very valuable cost information BUT can also contain the entire
+        output for images. This content is saved in output.result
+        """
+        entity_output = attributes.get("traceloop.entity.output")
+        if not entity_output:
+            return attributes
+
+        try:
+            parsed = orjson.loads(entity_output)
+
+            # Modify in place
+            if "output" in parsed and isinstance(parsed["output"], list):
+                for i, item_str in enumerate(parsed["output"]):
+                    item = orjson.loads(item_str)
+                    if item.get("type") == "image_generation_call" and "result" in item:
+                        del item["result"]
+                        parsed["output"][i] = orjson.dumps(item).decode("utf-8")
+                        break
+
+            attributes["traceloop.entity.output"] = orjson.dumps(parsed).decode("utf-8")
+
+        except Exception as e:
+            logger.error(f"Error parsing traceloop.entity.output: {e}")
+
+        return attributes
 
     def shutdown(self) -> None:
         self.force_flush()
