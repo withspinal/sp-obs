@@ -64,22 +64,33 @@ sp_obs.instrument_httpx()
 sp_obs.instrument_requests()
 ```
 
-### Adding Context to Traces
+### Adding Tags to Traces
 
-Use the context manager to add user and workflow information:
+Use the `tag` function to add user, workflow, and custom information to traces:
 
 ```python
 import sp_obs
 
-# Add context using context manager
-with sp_obs.add_context(
+# As a context manager
+with sp_obs.tag(
     workflow_id="workflow-123",
     user_id="user-456",
-    aggregation_id="session-789"  # optional
+    aggregation_id="session-789",  # optional, reserved keyword
+    custom_field="value",          # any additional tags
+    environment="production"
 ):
-    # All spans created here will have this context
+    # All spans created here will have these tags
     response = client.chat.completions.create(...)
+
+# As a function call (applies tags to current context)
+sp_obs.tag(
+    workflow_id="workflow-123", 
+    user_id="user-456",
+    custom_metadata="example"
+)
 ```
+
+**Note**: Only `aggregation_id` is a reserved keyword parameter. All other keyword arguments are added as custom tags with the `spinal.` prefix.
 
 ## Configuration Options
 
@@ -179,7 +190,7 @@ async def startup():
 
 @app.post("/generate")
 async def generate(user_id: str, workflow_id: str):
-    with sp_obs.add_context(user_id=user_id, workflow_id=workflow_id):
+    with sp_obs.tag(user_id=user_id, workflow_id=workflow_id):
         response = await client.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "user", "content": "Hello"}]
