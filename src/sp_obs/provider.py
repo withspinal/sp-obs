@@ -1,51 +1,17 @@
-"""
-SP-OBS: OpenTelemetry Span Interceptor
-Automatically attaches to existing TracerProvider to duplicate spans to custom endpoints
-"""
-
 import contextlib
 import typing
-import contextvars
 import logging
 import uuid
-from opentelemetry import baggage, trace, context
+
+from opentelemetry import baggage, context
+
+from ._internal import SPINAL_NAMESPACE
+from .utils import deprecated
 
 logger = logging.getLogger(__name__)
 
-# Create a context key for user data that propagates with traces
-TRACE_CONTEXT = contextvars.ContextVar("spinal_context", default={})
-SPINAL_NAMESPACE = "spinal"
 
-
-BILLING_EVENT_SPAN_NAME = "spinal_billable_event"
-USER_CONTEXT_SPAN_NAME = "spinal_user_context"
-WORKFLOW_CONTEXT_SPAN_NAME = "spinal_workflow_context"
-
-
-def spinal_add_as_billable(
-    attributes: typing.Optional[dict[str, typing.Any]] = None, aggregation_id: typing.Union[int, str, uuid.UUID] = None
-):
-    """
-    Add information on the trace that allows us to track it across our billing engine
-    """
-    tracer = trace.get_tracer(__name__)
-    with tracer.start_as_current_span(BILLING_EVENT_SPAN_NAME) as billing_span:
-        # Mark this as a billable span
-        trace_id = billing_span.get_span_context().trace_id
-
-        billing_span.set_attribute("billable", True)
-        billing_span.set_attribute("billing_trace_id", format(trace_id, "032x"))
-        billing_span.set_attribute("billing_aggregation_id", str(aggregation_id) if aggregation_id else "")
-
-        # Add any custom attributes
-        if attributes:
-            for key, value in attributes.items():
-                billing_span.set_attribute(f"user_attr.{key}", value)
-
-        # This span will auto-end and be sent to your processor
-        logger.debug(f"Created billable event span with attributes: {attributes}")
-
-
+@deprecated("add_tag()")
 @contextlib.contextmanager
 def add_context(
     *,
@@ -75,3 +41,67 @@ def add_context(
         yield
     finally:
         context.detach(token)
+
+
+class tag:
+    """
+    Add custom tags to the current context for Spinal tracing.
+
+    Can be used both as a context manager and as a regular function.
+
+    Args:
+        aggregation_id: Optional aggregation ID for distributed tracing
+        **kwargs: Any number of keyword arguments to be added as tags
+
+    All keyword arguments are added as tags to the baggage with the 'spinal.' prefix.
+
+    Examples:
+        # As a context manager
+        with add_tag(aggregation_id="agg123", workflow_id="123", user_id="456"):
+            # Your code here
+
+        # As a function call
+        add_tag(workflow_id="123", user_id="456", custom_field="value")
+    """
+
+    def __init__(self, aggregation_id: typing.Union[int, str, uuid.UUID] = None, **kwargs):
+        self.aggregation_id = aggregation_id
+        self.kwargs = kwargs
+        self.token = None
+        self._apply_tags()
+
+    def _apply_tags(self):
+        """Apply tags to the current context baggage"""
+        current_context = context.get_current()
+
+        baggage_to_add = {}
+
+        # Handle aggregation_id if provided
+        if self.aggregation_id:
+            baggage_to_add[f"{SPINAL_NAMESPACE}.aggregation_id"] = str(self.aggregation_id)
+
+        # Add all other keyword arguments
+        for key, value in self.kwargs.items():
+            baggage_key = f"{SPINAL_NAMESPACE}.{key}"
+            baggage_to_add[baggage_key] = str(value)
+
+        # Set all baggage items
+        for key, value in baggage_to_add.items():
+            current_context = baggage.set_baggage(key, value, current_context)
+
+        # Attach the updated context and save the token
+        self.token = context.attach(current_context)
+
+        logger.debug(f"Added tags to baggage: {baggage_to_add}")
+
+    def __enter__(self):
+        """Enter the context manager"""
+        # Tags are already applied in __init__
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit the context manager"""
+        # Detach the context if we have a token
+        if self.token:
+            context.detach(self.token)
+        return False

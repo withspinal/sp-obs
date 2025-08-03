@@ -1,0 +1,1 @@
+SPINAL_NAMESPACE = "spinal"

@@ -7,6 +7,7 @@ from opentelemetry.sdk.trace import ReadableSpan, Span
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from urllib.parse import urlparse
 
+from sp_obs._internal import SPINAL_NAMESPACE
 from sp_obs._internal.exporter import SpinalSpanExporter
 
 logger = logging.getLogger(__name__)
@@ -109,7 +110,7 @@ class SpinalSpanProcessor(BatchSpanProcessor):
         current_baggage = baggage.get_all(parent_context)
         if current_baggage:
             for key, value in current_baggage.items():
-                if key.startswith("spinal."):
+                if key.startswith(f"{SPINAL_NAMESPACE}."):
                     span.set_attribute(f"{key}", str(value))
 
     def on_end(self, span: ReadableSpan) -> None:
