@@ -3,7 +3,10 @@ from os import environ
 import logging
 from typing import Protocol, Optional
 
+from sp_obs._internal.core.httpx.httpx import SpinalHTTPXClientInstrumentor
+from sp_obs._internal.core.requests.requests import SpinalRequestsInstrumentor
 from sp_obs._internal.scrubbing import DefaultScrubber
+from sp_obs._internal.tracer import SpinalTracerProvider
 
 logger = logging.getLogger(__name__)
 
@@ -145,24 +148,37 @@ def configure(
     scrubber: SpinalScrubber | None = None,
 ) -> SpinalConfig:
     """
-    Configures the global Spinal SDK with the provided arguments to set up communication
-    and behavior for data export. This method initializes and returns a global SpinalConfig
-    object with the specified configuration.
+    Configures the global Spinal SDK settings and initializes the Spinal configuration.
+
+    This function allows setting up various configuration parameters such as the API endpoint,
+    authentication details, request headers, timeout values, batch processing options,
+    debugging mode, and a data scrubber. It also initializes auto instrumentation with a
+    Spinal tracer provider and logs the configuration status.
 
     Parameters:
-        endpoint (str | None): The endpoint URL for the Spinal SDK. Defaults to None.
-        api_key (str | None): The API key for authenticating with the endpoint. Defaults to None.
-        headers (dict[str, str] | None): A dictionary of custom headers to include in each request. Defaults to None.
-        timeout (int): The timeout in seconds for requests to the endpoint. Defaults to 5.
-        max_queue_size (int | None): The maximum allowed size of the internal queue. Defaults to None.
-        max_export_batch_size (int | None): The maximum number of items to include in an export batch. Defaults to None.
-        schedule_delay_millis (float | None): The delay in milliseconds between scheduled exports. Defaults to None.
-        export_timeout_millis (float | None): The timeout in milliseconds for export operations. Defaults to None.
-        scrubber (SpinalScrubber | None): An instance of SpinalScrubber to clean or preprocess data as required.
-                                          Defaults to None.
+    endpoint: str | None
+        The API endpoint to interact with. None if not specified.
+    api_key: str | None
+        The API key for authentication. None if not provided.
+    headers: dict[str, str] | None
+        Additional headers to include in requests. None by default.
+    timeout: int
+        The timeout in seconds for requests. Default is 5 seconds.
+    max_queue_size: int | None
+        Maximum size of the request queue. None for no limit.
+    max_export_batch_size: int | None
+        Maximum number of events to export at one time. None if not specified.
+    schedule_delay_millis: float | None
+        The delay in milliseconds between scheduled task executions. None if not set.
+    export_timeout_millis: float | None
+        Timeout in milliseconds for exporting operations. None if not configured.
+    scrubber: SpinalScrubber | None
+        A configuration scrubber for cleaning sensitive data. None to disable.
 
     Returns:
-        SpinalConfig: An instance of SpinalConfig with the provided configuration.
+    SpinalConfig
+        The updated Spinal configuration instance.
+
     """
     global _global_config
 
@@ -177,6 +193,12 @@ def configure(
         schedule_delay_millis=schedule_delay_millis,
         export_timeout_millis=export_timeout_millis,
     )
+
+    # Setup auto instrumentation
+    tracer_provider = SpinalTracerProvider(_global_config)
+    SpinalHTTPXClientInstrumentor().instrument(tracer_provider=tracer_provider.provider)
+    SpinalRequestsInstrumentor().instrument(tracer_provider=tracer_provider.provider)
+
     logger.info(f"Spinal SDK configured with endpoint: {_global_config.endpoint}")
     return _global_config
 

@@ -5,16 +5,12 @@ from enum import StrEnum
 from opentelemetry import baggage, trace
 from opentelemetry.sdk.trace import ReadableSpan, Span
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from urllib.parse import urlparse
 
 from sp_obs._internal import SPINAL_NAMESPACE
+from sp_obs._internal.core.recognised_integrations import INTEGRATIONS
 from sp_obs._internal.exporter import SpinalSpanExporter
 
 logger = logging.getLogger(__name__)
-
-BILLING_EVENT_SPAN_NAME = "spinal_billable_event"
-USER_CONTEXT_SPAN_NAME = "spinal_user_context"
-WORKFLOW_CONTEXT_SPAN_NAME = "spinal_workflow_context"
 
 
 class SpanType(StrEnum):
@@ -67,9 +63,9 @@ class SpinalSpanProcessor(BatchSpanProcessor):
         )
 
     def _get_span_type(self, span: ReadableSpan | Span) -> SpanType:
-        if hasattr(span, "_instrumentation_info"):
+        if hasattr(span, "instrumentation_scope") and span.instrumentation_scope:
             instrumentation_name = span.instrumentation_scope.name
-            library = instrumentation_name.split(".")[2]
+            library = instrumentation_name.split(".")[2] if len(instrumentation_name.split(".")) > 2 else None
 
             match library:
                 case "httpx":
@@ -90,16 +86,13 @@ class SpinalSpanProcessor(BatchSpanProcessor):
         Determines whether a given span should be processed or not based on its type
         and attributes.
         """
-        span_type = self._get_span_type(span)
-        if span_type == SpanType.UNKNOWN:
+        if not span.name.startswith("spinal"):
             return False
 
-        if span_type == SpanType.HTTPX:
-            url = urlparse(span.attributes.get("http.url"))
-            if url.netloc in EXCLUDED_URLS:
-                return False
-
-        return True
+        netloc = span.attributes.get("netloc")
+        if netloc in INTEGRATIONS:
+            return True
+        return False
 
     def on_start(self, span: Span, parent_context: typing.Optional[trace.Context] = None) -> None:
         """Called when a span is started"""
