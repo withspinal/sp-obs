@@ -1,3 +1,4 @@
+import gzip
 import logging
 import orjson
 
@@ -6,8 +7,11 @@ from typing import Any, Optional
 
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExportResult, SpanExporter
-
+from opentelemetry.instrumentation.utils import suppress_instrumentation
+from opentelemetry.semconv_ai import SpanAttributes as AISpanAttributes
 from sp_obs._internal.config import get_config
+from sp_obs._internal.core.providers.anthropic import parse_anthropic_sse
+from sp_obs._internal.core.providers.openai import parse_sse_data
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +45,8 @@ class SpinalSpanExporter(SpanExporter):
             span_data = []
             for span in spans:
                 attributes = dict(span.attributes)
-                attributes = self.remove_traceloop_entity_output(attributes)
-                attributes.pop("traceloop.entity.input", None)
+                attributes = self.decode_request_binary_data(attributes)
+                attributes = self.decode_response_binary_data(attributes)
                 if self.config.scrubber:
                     attributes = self.config.scrubber.scrub_attributes(attributes)
 
@@ -88,7 +92,8 @@ class SpinalSpanExporter(SpanExporter):
                 }
                 span_data.append(span_dict)
 
-            response = self._session.post(self.config.endpoint, json={"spans": span_data})
+            with suppress_instrumentation():
+                response = self._session.post(self.config.endpoint, json={"spans": span_data})
 
             if 200 <= response.status_code < 300:
                 logger.debug(f"Successfully exported {len(spans)} spans to {self.config.endpoint}")
@@ -101,34 +106,93 @@ class SpinalSpanExporter(SpanExporter):
             logger.error(f"Error exporting spans: {e}")
             return SpanExportResult.FAILURE
 
-    def remove_traceloop_entity_output(self, attributes: dict[str, Any]) -> dict[str, Any]:
+    def decode_request_binary_data(self, attributes: dict[str, Any]) -> dict[str, Any]:
         """
-        From the attributes dictionary, fetch the traceloop.entity.output attribute.
-        The entity output is a JSON string. It contains some very valuable cost information BUT can also contain the entire
-        output for images. This content is saved in output.result
+        Decode the binary data from the request attributes and update the attributes with the resultant data.
+
+        This method extracts and decodes binary data associated with a specific key from the provided
+        attributes. It deserializes the binary data into a dictionary and updates the original attributes
+        with the deserialized request parameters. If the specified binary data does not exist in the
+        attributes, the original attributes are returned without modification.
+
+        Parameters:
+            attributes (dict[str, Any]): A dictionary of attributes that may contain the binary data
+            to decode.
+
+        Returns:
+            dict[str, Any]: The updated attributes dictionary containing the decoded binary data as
+            request parameters. If no binary data is found, the original attributes are returned.
         """
-        entity_output = attributes.get("traceloop.entity.output")
-        if not entity_output:
+        raw_data_mv = attributes.pop("spinal.request.binary_data", None)
+        if not raw_data_mv:
             return attributes
 
-        try:
-            parsed = orjson.loads(entity_output)
+        binary_data = bytes(raw_data_mv)
+        request_parameters = orjson.loads(binary_data)
+        request_input = request_parameters.get("input", [])
+        if isinstance(request_input, list):
+            for i in request_parameters.get("input", []):
+                # We do not want to accept content from like images (OpenAI specific)
+                if (d := i.get("id")) and d.startswith("ig_"):
+                    del i["result"]
 
-            # Modify in place
-            if "output" in parsed and isinstance(parsed["output"], list):
-                for i, item_str in enumerate(parsed["output"]):
-                    item = orjson.loads(item_str)
-                    if item.get("type") == "image_generation_call" and "result" in item:
-                        del item["result"]
-                        parsed["output"][i] = orjson.dumps(item).decode("utf-8")
-                        break
-
-            attributes["traceloop.entity.output"] = orjson.dumps(parsed).decode("utf-8")
-
-        except Exception as e:
-            logger.error(f"Error parsing traceloop.entity.output: {e}")
-
+        attributes.update(request_parameters)
         return attributes
+
+    def decode_response_binary_data(self, attributes: dict[str, Any]) -> dict[str, Any]:
+        """
+        Attributes will have a field called 'raw_binary_data'. This is a memoryview, and we need to change into
+        a list of attributes. Bear in mind, these bytes could also be compressed.
+        """
+        raw_data_mv = attributes.pop("spinal.response.binary_data", None)
+        if not raw_data_mv:
+            return attributes
+
+        binary_data = bytes(raw_data_mv)
+        content_encoding = attributes.get("content-encoding", "")
+        if content_encoding == "gzip":
+            try:
+                binary_data = gzip.decompress(binary_data)
+            except gzip.BadGzipFile:
+                # Not gzipped despite header
+                pass
+
+        response_attributes = {}
+        content_type = attributes.get("content-type", "")
+
+        if any(
+            audio_type in content_type
+            for audio_type in ["audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/pcm", "audio/flac"]
+        ):
+            # For audio, we don't decode to text - store metadata instead
+            response_attributes = {
+                "audio_size_bytes": len(binary_data),
+                "audio_format": content_type,
+            }
+
+        elif "text/event-stream" in content_type:
+            text_data = binary_data.decode("utf-8")
+            system = attributes.get(AISpanAttributes.LLM_SYSTEM)
+            if system == "anthropic":
+                response_attributes = parse_anthropic_sse(text_data)
+            elif system == "openai":
+                response_attributes = parse_sse_data(text_data)
+            else:
+                logger.warning(f"Unknown system for event stream: {system}")
+                return attributes
+
+        elif "application/json" in content_type:
+            text_data = binary_data.decode("utf-8")
+            response_attributes = orjson.loads(text_data)
+
+        # We now need to scrub content - this could be done via the provider pattern - for now, we do output.content
+        for output in response_attributes.get("output", []):
+            content = output.get("content", {})
+            for c in content:
+                c.pop("text", None)
+            output.pop("result", None)  # handles images
+
+        return attributes | response_attributes
 
     def shutdown(self) -> None:
         self.force_flush()

@@ -46,8 +46,9 @@ def add_context(
 class tag:
     """
     Add custom tags to the current context for Spinal tracing.
-
     Can be used both as a context manager and as a regular function.
+
+    Note: OpenTelemetry's baggage system works independently of active spans.
 
     Args:
         aggregation_id: Optional aggregation ID for distributed tracing

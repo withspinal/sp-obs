@@ -1,6 +1,6 @@
 [project]
 name = "sp-obs"
-version = "0.1.6"
+version = "0.2.0"
 description = "Observability integration with Spinal"
 readme = "README.md"
 authors = [
@@ -8,7 +8,7 @@ authors = [
 ]
 license = "MIT"
 requires-python = ">=3.11"
-keywords = ["opentelemetry", "observability", "tracing", "monitoring", "llm", "ai"]
+keywords = ["opentelemetry", "observability", "tracing", "monitoring", "llm", "ai", "spinal"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -25,8 +25,9 @@ dependencies = [
     "opentelemetry-sdk>=1.35.0,<2",
     "httpx>=0.28.0,<1.0.0",
     "orjson>=3.11.1,<4",
-    "opentelemetry-instrumentation-httpx>=0.56b0,<1",
-    "opentelemetry-instrumentation-requests>=0.56b0,<1",
+    "opentelemetry-instrumentation-httpx>=0.57b0,<1",
+    "opentelemetry-instrumentation-requests>=0.57b0,<1",
+    "opentelemetry-semantic-conventions-ai>=0.4.12",
 ]
 
 [project.urls]
@@ -37,26 +38,17 @@ Issues = "https://github.com/withspinal/sp-obs/issues"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[project.optional-dependencies]
-openai = [
-    "opentelemetry-instrumentation-openai>=0.43.1,<1",
-    "opentelemetry-instrumentation-openai-agents>=0.43.1,<1"
-]
-anthropic = [
-    "opentelemetry-instrumentation-anthropic>=0.43.1,<1",
-]
-mistral = [
-     "opentelemetry-instrumentation-mistralai>=0.43.1,<1",
-]
-
-all = [
-    "opentelemetry-instrumentation-openai>=0.43.1,<1",
-    "opentelemetry-instrumentation-anthropic>=0.43.1,<1",
-]
-
 [dependency-groups]
 dev = [
     "pre-commit>=4.2.0",
     "ruff>=0.12.5",
     "twine>=6.1.0",
+]
+test = [
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.1.0",
+    "pytest-mock>=3.14.0",
+    "requests-mock>=1.12.1",
+    "httpx>=0.28.0",
+    "requests>=2.32.0",
 ]

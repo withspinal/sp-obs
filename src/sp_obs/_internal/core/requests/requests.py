@@ -1,0 +1,148 @@
+import io
+from functools import wraps
+from urllib.parse import urlparse
+import opentelemetry.instrumentation.requests
+from opentelemetry.trace import Status, StatusCode, get_tracer
+from opentelemetry.util.http import redact_url
+from requests import PreparedRequest, Session
+
+
+class SpinalRequestsInstrumentor(opentelemetry.instrumentation.requests.RequestsInstrumentor):
+    def _instrument(self, **kwargs):
+        provider = kwargs.get("tracer_provider")
+        tracer = get_tracer(__name__, tracer_provider=provider)
+
+        def wrap_raw_stream(response, span):
+            """Wrap the raw response stream for direct raw access"""
+            original_raw = response.raw
+
+            class CapturingRaw:
+                def __init__(self, raw):
+                    self._raw = raw
+                    self._captured_data = io.BytesIO()
+
+                def read(self, amt=None):
+                    data = self._raw.read(amt)
+                    if data:
+                        self._captured_data.write(data)
+                        if not hasattr(response, "_captured_chunks"):
+                            response._captured_chunks = []
+                        response._captured_chunks.append(data)
+                    else:
+                        # EOF reached - update span with captured content
+                        response._captured_content = self._captured_data.getvalue()
+                        response._capture_completed = True
+                        # Update span with the captured data
+                        span.set_attribute("spinal.response.binary_data", memoryview(response._captured_content))
+                        span.set_attribute("spinal.response.size", len(response._captured_content))
+                    return data
+
+                def __getattr__(self, name):
+                    return getattr(self._raw, name)
+
+            response.raw = CapturingRaw(original_raw)
+
+        def wrap_streaming_response(response, span):
+            """Wrap streaming response methods to capture content as it's consumed"""
+
+            # Store original methods
+            original_iter_content = response.iter_content
+
+            # Initialize capture storage
+            response._captured_chunks = []
+            response._capture_completed = False
+
+            @wraps(original_iter_content)
+            def wrapped_iter_content(chunk_size=1, decode_unicode=False):
+                """Wrapped iter_content that captures chunks"""
+                for chunk in original_iter_content(chunk_size, decode_unicode):
+                    response._captured_chunks.append(chunk)
+                    yield chunk
+
+                response._captured_content = b"".join(response._captured_chunks)
+                response._capture_completed = True
+                response._captured_chunks = []
+
+                span.set_attribute("spinal.response.binary_data", memoryview(response._captured_content))
+                span.set_attribute("spinal.response.size", len(response._captured_content))
+                span.set_attribute("spinal.response.capture_method", "iter_content")
+
+            # Wrap raw access too
+            if hasattr(response, "raw") and response.raw:
+                wrap_raw_stream(response, span)
+            response.iter_content = wrapped_iter_content
+
+            # Also wrap the content property for mixed access patterns
+            original_content_property = response.__class__.content.fget
+
+            def content_getter(self):
+                content = original_content_property(self)
+                if not span.is_recording():
+                    return content
+
+                span.set_attribute("spinal.response.binary_data", memoryview(content))
+                span.set_attribute("spinal.response.size", len(content))
+                span.set_attribute("spinal.response.capture_method", "content_property")
+                return content
+
+            # Create a new property descriptor for this specific response instance
+            response.__class__.content = property(content_getter)
+
+        def wrap_session_send(original_send):
+            @wraps(original_send)
+            def wrapped_send(self, request: PreparedRequest, **kwargs):
+                redacted_url = redact_url(request.url)
+                span = tracer.start_span("spinal.requests", attributes={"http.url": redacted_url})
+
+                try:
+                    response = original_send(self, request, **kwargs)
+
+                    headers = response.headers
+                    content_type = headers.get("content-type", "")
+                    encoding = headers.get("content-encoding", "")
+                    url = urlparse(redacted_url)
+
+                    span.set_attribute("content-type", content_type)
+                    span.set_attribute("content-encoding", encoding)
+                    span.set_attribute("http.status_code", response.status_code)
+                    span.set_attribute("http.url", redacted_url)
+                    span.set_attribute("http.host", url.hostname)
+
+                    if request.body:
+                        span.set_attribute("spinal.request.binary_data", memoryview(request.body))
+
+                    is_streaming = kwargs.get("stream", self.stream)
+                    if is_streaming:
+                        wrap_streaming_response(response, span)
+                        span.set_attribute("spinal.response.streaming", True)
+
+                        # Ensure cleanup if the stream never ends for whatever reason (exception, on purpose)
+                        response._spinal_span = span
+
+                        def cleanup_span():
+                            if hasattr(response, "_spinal_span"):
+                                response._spinal_span.end()
+                                delattr(response, "_spinal_span")
+
+                        import weakref
+
+                        weakref.finalize(response, cleanup_span)
+
+                    else:
+                        if hasattr(response, "_content") and response._content is not False:
+                            span.set_attribute("spinal.response.binary_data", memoryview(response._content))
+                            span.set_attribute("spinal.response.size", len(response._content))
+                            span.set_attribute("spinal.response.streaming", False)
+                        span.end()
+                    return response
+
+                except Exception as e:
+                    span.record_exception(e)
+                    span.set_status(Status(StatusCode.ERROR))
+                    span.end()
+                    raise
+
+            return wrapped_send
+
+        Session.send = wrap_session_send(Session.send)
+        super()._instrument(**kwargs)
