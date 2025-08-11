@@ -1,14 +1,15 @@
 # SP-OBS: Spinal OpenTelemetry Integration
 
-SP-OBS is Spinal's cost tracking library built on top of open telemetry. It works by adding isolated tracers to libraries that have not been instrumented
-and attached a processor to libraries that aloready have been instrumented. 
-This means we can also play nice with other observability libraries out there. 
+SP-OBS is Spinal's cost tracking library built on top of OpenTelemetry. It works by automatically instrumenting HTTP libraries (httpx, requests) and attaching a processor to existing OpenTelemetry setups. This dual approach allows it to integrate seamlessly with existing observability frameworks while selectively forwarding AI/LLM operations and billing events to Spinal's platform.
+
 ## Features
 
 - Seamlessly integrates with existing OpenTelemetry setups
 - Works with Logfire, vanilla OpenTelemetry, or any OTEL-compatible framework
+- Automatic instrumentation of httpx and requests libraries
 - Adds user and workflow context to spans for better tracking
 - Selective span processing - only sends relevant AI/billing spans
+- Built-in data scrubbing for sensitive information
 
 ## Installation
 
@@ -16,24 +17,11 @@ This means we can also play nice with other observability libraries out there.
 pip install sp-obs
 ```
 
-### With AI Provider Support
-
-```bash
-# For OpenAI support
-pip install sp-obs[openai]
-
-# For Anthropic support  
-pip install sp-obs[anthropic]
-
-# For all providers
-pip install sp-obs[all]
-```
-
 ## Quick Start
 
 ### Configuration
 
-First, configure SP-OBS with your endpoint and API key:
+Configure SP-OBS with your endpoint and API key. Instrumentation happens automatically when you call `configure()`:
 
 ```python
 import sp_obs
@@ -49,24 +37,11 @@ Or use environment variables:
 - `SPINAL_TRACING_ENDPOINT` (defaults to "https://cloud.withspinal.com")
 - `SPINAL_API_KEY`
 
-### Instrumenting AI Providers
-
-```python
-import sp_obs
-
-# Configure SP-OBS
-sp_obs.configure()
-
-# Instrument providers
-sp_obs.instrument_openai()
-sp_obs.instrument_anthropic()
-sp_obs.instrument_httpx()
-sp_obs.instrument_requests()
-```
+That's it! SP-OBS will automatically instrument httpx and requests to capture AI/LLM operations and HTTP requests.
 
 ### Adding Tags to Traces
 
-Use the `tag` function to add user, workflow, and custom information to traces:
+Use the `tag` class to add user, workflow, and custom information to traces:
 
 ```python
 import sp_obs
@@ -186,7 +161,6 @@ client = AsyncOpenAI()
 @app.on_event("startup")
 async def startup():
     sp_obs.configure()
-    sp_obs.instrument_openai()
 
 @app.post("/generate")
 async def generate(user_id: str, workflow_id: str):
