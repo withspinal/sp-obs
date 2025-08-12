@@ -9,3 +9,8 @@ wheels/
 # Virtual environments
 .venv
 .idea/
+
+# claude
+.claude
+.claude_local.md
+

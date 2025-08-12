@@ -57,12 +57,13 @@ python -m twine upload dist/*
 The library uses an **interceptor pattern** to attach to existing OpenTelemetry TracerProvider instances, avoiding the need for users to modify their existing observability setup.
 
 ### File Structure
-- `src/sp_obs/provider.py`: Context management functions (`add_context`, `spinal_add_as_billable`)
+- `src/sp_obs/provider.py`: Context management functions (`tag`, `add_context` - deprecated)
 - `src/sp_obs/__init__.py`: Public API exports
 - `src/sp_obs/_internal/processor.py`: SpinalSpanProcessor implementation
-- `src/sp_obs/_internal/exporter.py`: SpinalSpanExporter (singleton with httpx session)
+- `src/sp_obs/_internal/exporter.py`: SpinalSpanExporter (singleton with httpx session) and safe_decode utility
 - `src/sp_obs/_internal/config.py`: Configuration management
 - `src/sp_obs/_internal/providers/`: Provider-specific instrumentations (OpenAI, Anthropic, etc.)
+- `tests/test_exporter/test_safe_decode.py`: Tests for encoding/decoding handling
 
 ### Key Classes
 
@@ -83,14 +84,15 @@ The library uses an **interceptor pattern** to attach to existing OpenTelemetry 
    - Reuses httpx.Client session for efficiency
    - Converts spans to JSON with full attribute preservation
    - Applies configured scrubber before export
+   - Includes `safe_decode()` utility for robust encoding handling (UTF-8 → Windows-1252 → Latin-1 fallback)
 
 ### Public API Functions
 
 - `configure()`: Set up global configuration
-- `add_context()`: Context manager for adding workflow_id/user_id to baggage
-- `spinal_add_as_billable()`: Creates billable event spans
+- `tag()`: Context manager for adding workflow_id/user_id to baggage (replaces deprecated `add_context()`)
 - `instrument_openai()`, `instrument_anthropic()`, etc.: Provider instrumentations
 - `shutdown()`, `force_flush()`: Cleanup utilities
+- Scrubber classes: `DefaultScrubber`, `NoOpScrubber`, `SpinalScrubber`
 
 ### Context Propagation
 
@@ -113,3 +115,9 @@ Uses OpenTelemetry baggage for distributed tracing:
 5. **Python 3.11+**: Requires Python 3.11 or higher (per pyproject.toml).
 
 6. **Batch Processing**: Default 5-second flush interval or 512-span batch size, whichever comes first.
+
+7. **Encoding Handling**: The exporter includes robust encoding support via `safe_decode()`:
+   - Primary: UTF-8 decoding (standard for modern APIs)
+   - Fallback 1: Windows-1252 (handles Windows smart quotes, euro signs, etc.)
+   - Fallback 2: Latin-1 with replacement characters (prevents crashes on any byte sequence)
+   - This prevents UnicodeDecodeError exceptions when processing response data from various sources

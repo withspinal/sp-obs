@@ -171,7 +171,7 @@ class SpinalSpanExporter(SpanExporter):
             }
 
         elif "text/event-stream" in content_type:
-            text_data = binary_data.decode("utf-8")
+            text_data = safe_decode(binary_data)
             system = attributes.get(AISpanAttributes.LLM_SYSTEM)
             if system == "anthropic":
                 response_attributes = parse_anthropic_sse(text_data)
@@ -182,7 +182,7 @@ class SpinalSpanExporter(SpanExporter):
                 return attributes
 
         elif "application/json" in content_type:
-            text_data = binary_data.decode("utf-8")
+            text_data = safe_decode(binary_data)
             response_attributes = orjson.loads(text_data)
 
         # We now need to scrub content - this could be done via the provider pattern - for now, we do output.content
@@ -200,3 +200,26 @@ class SpinalSpanExporter(SpanExporter):
         self._shutdown = True
         if hasattr(self, "_session"):
             self._session.close()
+
+
+def safe_decode(binary_data: bytes) -> str:
+    """
+    Safely decode binary data to string, trying multiple encodings if UTF-8 fails.
+
+    Args:
+        binary_data: The bytes to decode
+
+    Returns:
+        Decoded string (may contain replacement characters if decoding fails)
+    """
+    try:
+        return binary_data.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            return binary_data.decode("windows-1252")
+        except UnicodeDecodeError:
+            pass
+
+        # If all encodings fail, use latin-1 which accepts all byte values
+        text_data = binary_data.decode("latin-1", errors="replace")
+        return text_data
