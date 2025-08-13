@@ -12,7 +12,7 @@ from opentelemetry.trace import get_tracer
 
 from sp_obs._internal.core.httpx.async_stream import AsyncStreamWrapper
 from sp_obs._internal.core.httpx.sync_stream import SyncStreamWrapper
-from sp_obs._internal.core.recognised_integrations import GEN_AI_INTEGRATION, INTEGRATIONS
+from sp_obs._internal.core.recognised_integrations import INTEGRATIONS
 
 
 class SpinalHTTPXClientInstrumentor(opentelemetry.instrumentation.httpx.HTTPXClientInstrumentor):
@@ -31,7 +31,6 @@ class SpinalHTTPXClientInstrumentor(opentelemetry.instrumentation.httpx.HTTPXCli
             # not be able to tell if an exception has been raised. So this will only trigger for successful
             # operations. We would need to use the parent span created by httpx
             current_tracing_context = context.get_current()
-
             result = original_extract_response(response)
 
             # Check to see if we have support for this type of span
@@ -40,13 +39,14 @@ class SpinalHTTPXClientInstrumentor(opentelemetry.instrumentation.httpx.HTTPXCli
             if httpx_attributes:
                 url = httpx_attributes.get(SpanAttributes.HTTP_URL)
                 location = urlparse(url)
-                if location.hostname not in INTEGRATIONS:
+                integration_provider = INTEGRATIONS.get(location.hostname)
+                if not integration_provider:
                     return result
 
-                httpx_span.set_attribute("netloc", location.netloc)
-                httpx_span.set_attribute(
-                    AISpanAttributes.LLM_SYSTEM, GEN_AI_INTEGRATION.get(location.netloc, "unknown")
-                )
+                # Set parent span attributes which will be loaded into children upon creation
+                httpx_span.set_attribute("provider", integration_provider)
+                httpx_span.set_attribute("http.host", location.hostname)
+                httpx_span.set_attribute(AISpanAttributes.LLM_SYSTEM, integration_provider)
 
             else:
                 return result
