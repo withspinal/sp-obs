@@ -7,7 +7,6 @@ from opentelemetry.sdk.trace import ReadableSpan, Span
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from sp_obs._internal import SPINAL_NAMESPACE
-from sp_obs._internal.core.recognised_integrations import INTEGRATIONS
 from sp_obs._internal.exporter import SpinalSpanExporter
 
 logger = logging.getLogger(__name__)
@@ -89,10 +88,9 @@ class SpinalSpanProcessor(BatchSpanProcessor):
         if not span.name.startswith("spinal"):
             return False
 
-        netloc = span.attributes.get("netloc")
-        if netloc in INTEGRATIONS:
-            return True
-        return False
+        if not span.attributes.get("provider"):
+            return False
+        return True
 
     def on_start(self, span: Span, parent_context: typing.Optional[trace.Context] = None) -> None:
         """Called when a span is started"""

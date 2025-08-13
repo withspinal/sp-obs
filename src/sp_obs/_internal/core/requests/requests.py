@@ -6,6 +6,8 @@ from opentelemetry.trace import Status, StatusCode, get_tracer
 from opentelemetry.util.http import redact_url
 from requests import PreparedRequest, Session
 
+from sp_obs._internal.core.recognised_integrations import INTEGRATIONS
+
 
 class SpinalRequestsInstrumentor(opentelemetry.instrumentation.requests.RequestsInstrumentor):
     def _instrument(self, **kwargs):
@@ -102,6 +104,7 @@ class SpinalRequestsInstrumentor(opentelemetry.instrumentation.requests.Requests
                     encoding = headers.get("content-encoding", "")
                     url = urlparse(redacted_url)
 
+                    span.set_attribute("provider", INTEGRATIONS.get(url.hostname))
                     span.set_attribute("content-type", content_type)
                     span.set_attribute("content-encoding", encoding)
                     span.set_attribute("http.status_code", response.status_code)

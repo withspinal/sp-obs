@@ -79,7 +79,7 @@ class tag:
 
         # Handle aggregation_id if provided
         if self.aggregation_id:
-            baggage_to_add[f"{SPINAL_NAMESPACE}.aggregation_id"] = str(self.aggregation_id)
+            baggage_to_add[f"{SPINAL_NAMESPACE}_aggregation_id"] = str(self.aggregation_id)
 
         # Add all other keyword arguments
         for key, value in self.kwargs.items():
