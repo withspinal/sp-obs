@@ -101,7 +101,7 @@ class SpinalSpanProcessor(BatchSpanProcessor):
         current_baggage = baggage.get_all(parent_context)
         if current_baggage:
             for key, value in current_baggage.items():
-                if key.startswith(f"{SPINAL_NAMESPACE}."):
+                if key.startswith(f"{SPINAL_NAMESPACE}"):
                     span.set_attribute(f"{key}", str(value))
 
     def on_end(self, span: ReadableSpan) -> None:
