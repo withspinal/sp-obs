@@ -88,7 +88,7 @@ class SpinalSpanProcessor(BatchSpanProcessor):
         if not span.name.startswith("spinal"):
             return False
 
-        if not span.attributes.get("provider"):
+        if not span.attributes.get("spinal.provider"):
             return False
         return True
 

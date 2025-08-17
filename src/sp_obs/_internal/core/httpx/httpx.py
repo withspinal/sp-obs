@@ -44,7 +44,7 @@ class SpinalHTTPXClientInstrumentor(opentelemetry.instrumentation.httpx.HTTPXCli
                     return result
 
                 # Set parent span attributes which will be loaded into children upon creation
-                httpx_span.set_attribute("provider", integration_provider)
+                httpx_span.set_attribute("spinal.provider", integration_provider)
                 httpx_span.set_attribute("http.host", location.hostname)
                 httpx_span.set_attribute(AISpanAttributes.LLM_SYSTEM, integration_provider)
 
