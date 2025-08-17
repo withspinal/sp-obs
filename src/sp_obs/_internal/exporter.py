@@ -8,10 +8,8 @@ from typing import Any, Optional
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExportResult, SpanExporter
 from opentelemetry.instrumentation.utils import suppress_instrumentation
-from opentelemetry.semconv_ai import SpanAttributes as AISpanAttributes
 from sp_obs._internal.config import get_config
-from sp_obs._internal.core.providers.anthropic import parse_anthropic_sse
-from sp_obs._internal.core.providers.openai import parse_sse_data
+from sp_obs._internal.core.providers import get_provider
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +121,7 @@ class SpinalSpanExporter(SpanExporter):
             dict[str, Any]: The updated attributes dictionary containing the decoded binary data as
             request parameters. If no binary data is found, the original attributes are returned.
         """
-        raw_data_mv = attributes.pop("spinal.request.binary_data", None)
+        raw_data_mv: memoryview | None = attributes.pop("spinal.request.binary_data", None)
         if not raw_data_mv:
             return attributes
 
@@ -144,7 +142,7 @@ class SpinalSpanExporter(SpanExporter):
         Attributes will have a field called 'raw_binary_data'. This is a memoryview, and we need to change into
         a list of attributes. Bear in mind, these bytes could also be compressed.
         """
-        raw_data_mv = attributes.pop("spinal.response.binary_data", None)
+        raw_data_mv: memoryview | None = attributes.pop("spinal.response.binary_data", None)
         if not raw_data_mv:
             return attributes
 
@@ -158,6 +156,7 @@ class SpinalSpanExporter(SpanExporter):
                 pass
 
         response_attributes = {}
+        provider = get_provider(attributes.get("spinal.provider"))
         content_type = attributes.get("content-type", "")
 
         if any(
@@ -172,26 +171,13 @@ class SpinalSpanExporter(SpanExporter):
 
         elif "text/event-stream" in content_type:
             text_data = safe_decode(binary_data)
-            system = attributes.get(AISpanAttributes.LLM_SYSTEM)
-            if system == "anthropic":
-                response_attributes = parse_anthropic_sse(text_data)
-            elif system == "openai":
-                response_attributes = parse_sse_data(text_data)
-            else:
-                logger.warning(f"Unknown system for event stream: {system}")
-                return attributes
+            response_attributes = provider.handle_event_stream(event_stream=text_data)
 
         elif "application/json" in content_type:
             text_data = safe_decode(binary_data)
             response_attributes = orjson.loads(text_data)
 
-        # We now need to scrub content - this could be done via the provider pattern - for now, we do output.content
-        for output in response_attributes.get("output", []):
-            content = output.get("content", {})
-            for c in content:
-                c.pop("text", None)
-            output.pop("result", None)  # handles images
-
+        response_attributes = provider.parse_response_attributes(response_attributes)
         return attributes | response_attributes
 
     def shutdown(self) -> None:

@@ -81,7 +81,7 @@ class TestSpinalHTTPXClientInstrumentor:
                         # Verify integration domain was processed
                         mock_span.set_attribute.assert_any_call("http.host", "api.openai.com")
                         mock_span.set_attribute.assert_any_call(AISpanAttributes.LLM_SYSTEM, "openai")
-                        mock_span.set_attribute.assert_any_call("provider", "openai")
+                        mock_span.set_attribute.assert_any_call("spinal.provider", "openai")
                         assert isinstance(response.stream, SyncStreamWrapper)
 
             # Test with non-integration domain
@@ -183,4 +183,4 @@ class TestSpinalHTTPXClientInstrumentor:
                         # Verify correct attributes were set
                         mock_span.set_attribute.assert_any_call("http.host", "api.anthropic.com")
                         mock_span.set_attribute.assert_any_call(AISpanAttributes.LLM_SYSTEM, "anthropic")
-                        mock_span.set_attribute.assert_any_call("provider", "anthropic")
+                        mock_span.set_attribute.assert_any_call("spinal.provider", "anthropic")
