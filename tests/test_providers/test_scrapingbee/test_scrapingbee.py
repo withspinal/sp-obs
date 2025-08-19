@@ -20,7 +20,7 @@ class TestScrapingBeeProvider:
             "spinal.http.request.query.url": "https://app.scrapingbee.com/api/v1/?api_key=BAD_KEY&url=https://example.com",
             "spinal.http.request.query.render_js": "false",
             "spinal.response.size": 647,
-            "spinal.response.streaming": False
+            "spinal.response.streaming": False,
         }
 
     @pytest.fixture
@@ -57,7 +57,7 @@ class TestScrapingBeeProvider:
             "Referrer-Policy": "strict-origin-when-cross-origin",
             "Vary": "Cookie",
             "Content-Encoding": "gzip",
-            "Sozu-Id": "01K31QW6GX08VPGAE0XQ4EDTWT"
+            "Sozu-Id": "01K31QW6GX08VPGAE0XQ4EDTWT",
         }
 
     def test_provider_identification(self, sample_response_attributes):
@@ -69,17 +69,15 @@ class TestScrapingBeeProvider:
 
         assert isinstance(provider, ScrapingBeeProvider), f"Expected ScrapingBeeProvider instance, got {type(provider)}"
 
-    
     def test_provider_parse_header_attributes(self, sample_response_headers):
         """Test that the provider parses the header attributes correctly"""
         provider = get_provider("scrapingbee")
-        
+
         headers = {"cost": "5"}
 
         parsed = provider.parse_response_headers(sample_response_headers)
-         # Verify it's returning the expected output 
+        # Verify it's returning the expected output
         assert parsed == headers
-
 
     def test_provider_parse_response_attributes(self, sample_response_attributes):
         """Test that the provider parses the response attributes correctly"""
@@ -87,5 +85,3 @@ class TestScrapingBeeProvider:
         # test that the provider returns an empty dict
         parsed = provider.parse_response_attributes(sample_response_attributes)
         assert parsed == {}
-
-        
