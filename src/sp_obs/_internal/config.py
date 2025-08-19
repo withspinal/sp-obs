@@ -7,6 +7,7 @@ from sp_obs._internal.core.httpx.httpx import SpinalHTTPXClientInstrumentor
 from sp_obs._internal.core.requests.requests import SpinalRequestsInstrumentor
 from sp_obs._internal.scrubbing import DefaultScrubber
 from sp_obs._internal.tracer import SpinalTracerProvider
+from opentelemetry.util.http import PARAMS_TO_REDACT
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +199,9 @@ def configure(
     tracer_provider = SpinalTracerProvider(_global_config)
     SpinalHTTPXClientInstrumentor().instrument(tracer_provider=tracer_provider.provider)
     SpinalRequestsInstrumentor().instrument(tracer_provider=tracer_provider.provider)
+
+    # Add to params to redact util
+    PARAMS_TO_REDACT.append("api_key")
 
     logger.info(f"Spinal SDK configured with endpoint: {_global_config.endpoint}")
     return _global_config
