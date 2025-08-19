@@ -89,7 +89,6 @@ class SpinalSpanExporter(SpanExporter):
                     else None,
                 }
                 span_data.append(span_dict)
-                print(span_dict)
 
             with suppress_instrumentation():
                 response = self._session.post(self.config.endpoint, json={"spans": span_data})
