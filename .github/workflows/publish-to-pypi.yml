@@ -1,0 +1,66 @@
+# This workflow automatically publishes to PyPI when a tag is pushed
+# It uses trusted publishing, which is more secure than using API tokens
+
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v0.2.8, v1.0.0, etc.
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'  # Minimum version from pyproject.toml
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Build package with uv
+        run: |
+          uv build
+          # Verify the built distributions
+          ls -la dist/
+          
+      - name: Store the distribution packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+  publish-to-pypi:
+    name: Publish to PyPI
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/sp-obs/${{ github.ref_name }}
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No configuration needed when using trusted publishing
+        # The action will use OIDC to authenticate with PyPI
