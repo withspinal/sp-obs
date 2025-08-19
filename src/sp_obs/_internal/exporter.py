@@ -158,7 +158,6 @@ class SpinalSpanExporter(SpanExporter):
         response_attributes = {}
         provider = get_provider(attributes.get("spinal.provider"))
         content_type = attributes.get("content-type", "")
-
         if any(
             audio_type in content_type
             for audio_type in ["audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/pcm", "audio/flac"]

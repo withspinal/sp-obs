@@ -7,6 +7,7 @@ from opentelemetry.util.http import redact_url
 from requests import PreparedRequest, Session
 
 from sp_obs._internal.core.recognised_integrations import INTEGRATIONS
+from sp_obs.utils import add_request_params_to_span
 
 
 class SpinalRequestsInstrumentor(opentelemetry.instrumentation.requests.RequestsInstrumentor):
@@ -98,7 +99,6 @@ class SpinalRequestsInstrumentor(opentelemetry.instrumentation.requests.Requests
 
                 try:
                     response = original_send(self, request, **kwargs)
-
                     headers = response.headers
                     content_type = headers.get("content-type", "")
                     encoding = headers.get("content-encoding", "")
@@ -110,6 +110,7 @@ class SpinalRequestsInstrumentor(opentelemetry.instrumentation.requests.Requests
                     span.set_attribute("http.status_code", response.status_code)
                     span.set_attribute("http.url", redacted_url)
                     span.set_attribute("http.host", url.hostname)
+                    add_request_params_to_span(span, redacted_url)
 
                     if request.body:
                         span.set_attribute("spinal.request.binary_data", memoryview(request.body))
@@ -132,7 +133,7 @@ class SpinalRequestsInstrumentor(opentelemetry.instrumentation.requests.Requests
                         weakref.finalize(response, cleanup_span)
 
                     else:
-                        if hasattr(response, "_content") and response._content is not False:
+                        if hasattr(response, "_content") and response._content is not None:
                             span.set_attribute("spinal.response.binary_data", memoryview(response._content))
                             span.set_attribute("spinal.response.size", len(response._content))
                             span.set_attribute("spinal.response.streaming", False)
