@@ -177,7 +177,14 @@ class SpinalSpanExporter(SpanExporter):
             response_attributes = orjson.loads(text_data)
 
         response_attributes = provider.parse_response_attributes(response_attributes)
-        return attributes | response_attributes
+
+        # Lets scrub response headers for this provider
+        all_response_headers = {
+            k: attributes.pop(k) for k in list(attributes.keys()) if k.startswith("spinal.http.response.header.")
+        }
+        response_headers = provider.parse_response_headers(all_response_headers)
+
+        return attributes | response_attributes | response_headers
 
     def shutdown(self) -> None:
         self.force_flush()

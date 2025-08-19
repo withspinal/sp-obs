@@ -104,6 +104,10 @@ class SpinalRequestsInstrumentor(opentelemetry.instrumentation.requests.Requests
                     encoding = headers.get("content-encoding", "")
                     url = urlparse(redacted_url)
 
+                    # Save response headers
+                    for headers, values in headers.items():
+                        span.set_attribute(f"spinal.http.response.header.{headers}", values)
+
                     span.set_attribute("spinal.provider", INTEGRATIONS.get(url.hostname))
                     span.set_attribute("content-type", content_type)
                     span.set_attribute("content-encoding", encoding)

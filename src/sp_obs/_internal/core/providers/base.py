@@ -9,3 +9,7 @@ class BaseProvider(metaclass=ABCMeta):
     @abstractmethod
     def parse_response_attributes(self, response_attributes: dict[str, Any]) -> dict[str, Any]:
         pass
+
+    def parse_response_headers(self, _: dict[str, str]) -> dict[str, str]:
+        """By default, no headers are parsed"""
+        return {}

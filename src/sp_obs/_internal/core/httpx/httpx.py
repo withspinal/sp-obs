@@ -9,10 +9,12 @@ from httpx import AsyncByteStream, SyncByteStream
 from opentelemetry import context, trace
 from opentelemetry.semconv.trace import SpanAttributes
 from opentelemetry.trace import get_tracer
+from opentelemetry.util.http import redact_url
 
 from sp_obs._internal.core.httpx.async_stream import AsyncStreamWrapper
 from sp_obs._internal.core.httpx.sync_stream import SyncStreamWrapper
 from sp_obs._internal.core.recognised_integrations import INTEGRATIONS
+from sp_obs.utils import add_request_params_to_span
 
 
 class SpinalHTTPXClientInstrumentor(opentelemetry.instrumentation.httpx.HTTPXClientInstrumentor):
@@ -38,7 +40,9 @@ class SpinalHTTPXClientInstrumentor(opentelemetry.instrumentation.httpx.HTTPXCli
             httpx_attributes = getattr(httpx_span, "attributes", {}) if httpx_span else {}
             if httpx_attributes:
                 url = httpx_attributes.get(SpanAttributes.HTTP_URL)
-                location = urlparse(url)
+                redacted_url = redact_url(url)
+
+                location = urlparse(redacted_url)
                 integration_provider = INTEGRATIONS.get(location.hostname)
                 if not integration_provider:
                     return result
@@ -47,6 +51,7 @@ class SpinalHTTPXClientInstrumentor(opentelemetry.instrumentation.httpx.HTTPXCli
                 httpx_span.set_attribute("spinal.provider", integration_provider)
                 httpx_span.set_attribute("http.host", location.hostname)
                 httpx_span.set_attribute(AISpanAttributes.LLM_SYSTEM, integration_provider)
+                add_request_params_to_span(httpx_span, redacted_url)
 
             else:
                 return result
