@@ -12,7 +12,7 @@ class ScrapingBeeProvider(BaseProvider):
         Parses and processes the response attributes by removing unnecessary fields.
         """
 
-        cost = response_attributes.get("Spb-cost")
+        cost = response_attributes.get("spinal.http.response.header.Spb-cost")
 
         if cost is not None:
             return {"cost": cost}
