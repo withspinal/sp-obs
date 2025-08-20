@@ -5,9 +5,11 @@ Tracer module for managing isolated tracer providers
 import logging
 import typing
 
+from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
+from opentelemetry.trace import ProxyTracerProvider
 
 if typing.TYPE_CHECKING:
     from .config import SpinalConfig
@@ -61,6 +63,11 @@ class SpinalTracerProvider:
                 export_timeout_millis=self._config.export_timeout_millis,
             )
         )
+
+        # We need to set the global provider if there currently isn't one
+        global_provider = trace.get_tracer_provider()
+        if isinstance(global_provider, ProxyTracerProvider):
+            trace.set_tracer_provider(provider)
 
         logger.debug(f"Created isolated tracer provider for service: {service_name}")
         return provider

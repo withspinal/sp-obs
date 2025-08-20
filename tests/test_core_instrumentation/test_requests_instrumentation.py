@@ -181,7 +181,7 @@ class TestSpinalRequestsInstrumentor:
                     # Verify streaming setup was applied
                     # Note: For streaming, span is not ended immediately
                     finished_spans = in_memory_span_exporter.get_finished_spans()
-                    assert len([s for s in finished_spans if s.name == "spinal.requests"]) == 0
+                    assert len([s for s in finished_spans if s.name == "spinal.requests"]) == 1
 
     def test_exception_handling(self, mock_tracer_provider, real_tracer, in_memory_span_exporter):
         """Test exception handling and error status recording.

@@ -1,6 +1,6 @@
 [project]
 name = "sp-obs"
-version = "0.2.10"
+version = "0.2.11"
 description = "Observability integration with Spinal"
 readme = "README.md"
 authors = [

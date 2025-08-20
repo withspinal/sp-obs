@@ -1,5 +1,4 @@
 from .provider import (
-    add_context,
     tag,
 )
 from ._internal.config import (
@@ -16,7 +15,6 @@ __all__ = [
     # Configuration
     "configure",
     # Context and billing
-    "add_context",
     "tag",
     # Scrubbing
     "SpinalScrubber",
