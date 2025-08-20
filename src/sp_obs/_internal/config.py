@@ -140,7 +140,6 @@ _global_config: Optional[SpinalConfig] = None
 def configure(
     endpoint: str | None = None,
     api_key: str | None = None,
-    serp_api_key: str | None = None,
     headers: dict[str, str] | None = None,
     timeout: int = 5,
     max_queue_size: int | None = None,
