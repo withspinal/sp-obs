@@ -21,7 +21,12 @@ class TestIntegrationMappings:
 
     def test_tools_integration_mapping(self):
         """Test TOOLS_INTEGRATION contains expected tool providers."""
-        expected_tools = {"api.elevenlabs.io": "elevenlabs", "serpapi.com": "serpapi", "api.firecrawl.dev": "firecrawl"}
+        expected_tools = {
+            "api.elevenlabs.io": "elevenlabs",
+            "serpapi.com": "serpapi",
+            "api.firecrawl.dev": "firecrawl",
+            "app.scrapingbee.com": "scrapingbee",
+        }
 
         for domain, expected_system in expected_tools.items():
             assert domain in TOOLS_INTEGRATION
@@ -71,6 +76,8 @@ class TestIntegrationMappings:
             # Firecrawl variations
             ("https://api.firecrawl.dev/v0/crawl", "api.firecrawl.dev", "firecrawl"),
             ("https://api.firecrawl.dev/v0/scrape", "api.firecrawl.dev", "firecrawl"),
+            # ScrapingBee variations
+            ("https://app.scrapingbee.com/api/v1/", "app.scrapingbee.com", "scrapingbee"),
         ],
     )
     def test_integration_domain_extraction(self, url, expected_domain, expected_system):

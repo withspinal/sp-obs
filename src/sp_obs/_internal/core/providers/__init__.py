@@ -2,6 +2,7 @@ from sp_obs._internal.core.providers.base import BaseProvider
 from sp_obs._internal.core.providers.openai import OpenAIProvider
 from sp_obs._internal.core.providers.anthropic import AnthropicProvider
 from sp_obs._internal.core.providers.firecrawl import FirecrawlProvider
+from sp_obs._internal.core.providers.scrapingbee import ScrapingBeeProvider
 
 _provider_cache = {}
 
@@ -14,6 +15,8 @@ def get_provider(provider_name: str) -> BaseProvider:
             _provider_cache[provider_name] = AnthropicProvider()
         elif provider_name == "firecrawl":
             _provider_cache[provider_name] = FirecrawlProvider()
+        elif provider_name == "scrapingbee":
+            _provider_cache[provider_name] = ScrapingBeeProvider()
         else:
             raise ValueError(f"Invalid provider name: {provider_name}")
 
