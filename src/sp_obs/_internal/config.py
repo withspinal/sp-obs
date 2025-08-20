@@ -202,6 +202,7 @@ def configure(
 
     # Add to params to redact util
     PARAMS_TO_REDACT.append("api_key")
+    PARAMS_TO_REDACT.append("serp_api_key")
 
     logger.info(f"Spinal SDK configured with endpoint: {_global_config.endpoint}")
     return _global_config
