@@ -1,4 +1,3 @@
-import contextlib
 import typing
 import logging
 import uuid
@@ -6,41 +5,8 @@ import uuid
 from opentelemetry import baggage, context
 
 from ._internal import SPINAL_NAMESPACE
-from .utils import deprecated
 
 logger = logging.getLogger(__name__)
-
-
-@deprecated("add_tag()")
-@contextlib.contextmanager
-def add_context(
-    *,
-    workflow_id: typing.Union[int, str, uuid.UUID],
-    user_id: typing.Union[int, str, uuid.UUID],
-    aggregation_id: typing.Union[int, str, uuid.UUID] = None,
-):
-    """
-    Utility function to allow a user to add context to a trace so that spinal can trace what is happening across the stack.
-    Baggage will need to be set here so that distributed tracking can take effect.
-    The aggregation id is an optional id given that aggregates traces together.
-    """
-    current_context = context.get_current()
-
-    baggage_to_add = {
-        f"{SPINAL_NAMESPACE}.workflow_id": str(workflow_id),
-        f"{SPINAL_NAMESPACE}.user_context.id": user_id,
-    }
-    if aggregation_id:
-        baggage_to_add[f"{SPINAL_NAMESPACE}.aggregation_id"] = str(aggregation_id)
-
-    for key, value in baggage_to_add.items():
-        current_context = baggage.set_baggage(key, value, current_context)
-    token = context.attach(current_context)
-
-    try:
-        yield
-    finally:
-        context.detach(token)
 
 
 class tag:
@@ -83,7 +49,7 @@ class tag:
 
         # Add all other keyword arguments
         for key, value in self.kwargs.items():
-            baggage_key = f"{SPINAL_NAMESPACE}.{key}"
+            baggage_key = f"{SPINAL_NAMESPACE}.tag.{key}"
             baggage_to_add[baggage_key] = str(value)
 
         # Set all baggage items

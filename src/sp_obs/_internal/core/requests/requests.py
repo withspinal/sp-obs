@@ -95,60 +95,60 @@ class SpinalRequestsInstrumentor(opentelemetry.instrumentation.requests.Requests
             @wraps(original_send)
             def wrapped_send(self, request: PreparedRequest, **kwargs):
                 redacted_url = redact_url(request.url)
-                span = tracer.start_span("spinal.requests", attributes={"http.url": redacted_url})
+                url = urlparse(redacted_url)
 
-                try:
-                    response = original_send(self, request, **kwargs)
-                    headers = response.headers
-                    content_type = headers.get("content-type", "")
-                    encoding = headers.get("content-encoding", "")
-                    url = urlparse(redacted_url)
+                with tracer.start_as_current_span(
+                    "spinal.requests",
+                    attributes={"http.url": redacted_url, "spinal.provider": INTEGRATIONS.get(url.hostname)},
+                ) as span:
+                    try:
+                        response = original_send(self, request, **kwargs)
+                        headers = response.headers
+                        content_type = headers.get("content-type", "")
+                        encoding = headers.get("content-encoding", "")
 
-                    # Save response headers
-                    for headers, values in headers.items():
-                        span.set_attribute(f"spinal.http.response.header.{headers}", values)
+                        # Save response headers
+                        for headers, values in headers.items():
+                            span.set_attribute(f"spinal.http.response.header.{headers}", values)
 
-                    span.set_attribute("spinal.provider", INTEGRATIONS.get(url.hostname))
-                    span.set_attribute("content-type", content_type)
-                    span.set_attribute("content-encoding", encoding)
-                    span.set_attribute("http.status_code", response.status_code)
-                    span.set_attribute("http.url", redacted_url)
-                    span.set_attribute("http.host", url.hostname)
-                    add_request_params_to_span(span, redacted_url)
+                        span.set_attribute("content-type", content_type)
+                        span.set_attribute("content-encoding", encoding)
+                        span.set_attribute("http.status_code", response.status_code)
+                        span.set_attribute("http.url", redacted_url)
+                        span.set_attribute("http.host", url.hostname)
+                        add_request_params_to_span(span, redacted_url)
 
-                    if request.body:
-                        span.set_attribute("spinal.request.binary_data", memoryview(request.body))
+                        if request.body:
+                            span.set_attribute("spinal.request.binary_data", memoryview(request.body))
 
-                    is_streaming = kwargs.get("stream", self.stream)
-                    if is_streaming:
-                        wrap_streaming_response(response, span)
-                        span.set_attribute("spinal.response.streaming", True)
+                        is_streaming = kwargs.get("stream", self.stream)
+                        if is_streaming:
+                            wrap_streaming_response(response, span)
+                            span.set_attribute("spinal.response.streaming", True)
 
-                        # Ensure cleanup if the stream never ends for whatever reason (exception, on purpose)
-                        response._spinal_span = span
+                            # Ensure cleanup if the stream never ends for whatever reason (exception, on purpose)
+                            response._spinal_span = span
 
-                        def cleanup_span():
-                            if hasattr(response, "_spinal_span"):
-                                response._spinal_span.end()
-                                delattr(response, "_spinal_span")
+                            def cleanup_span():
+                                if hasattr(response, "_spinal_span"):
+                                    response._spinal_span.end()
+                                    delattr(response, "_spinal_span")
 
-                        import weakref
+                            import weakref
 
-                        weakref.finalize(response, cleanup_span)
+                            weakref.finalize(response, cleanup_span)
 
-                    else:
-                        if hasattr(response, "_content") and response._content is not None:
-                            span.set_attribute("spinal.response.binary_data", memoryview(response._content))
-                            span.set_attribute("spinal.response.size", len(response._content))
-                            span.set_attribute("spinal.response.streaming", False)
-                        span.end()
-                    return response
+                        else:
+                            if hasattr(response, "_content") and response._content is not None:
+                                span.set_attribute("spinal.response.binary_data", memoryview(response._content))
+                                span.set_attribute("spinal.response.size", len(response._content))
+                                span.set_attribute("spinal.response.streaming", False)
+                        return response
 
-                except Exception as e:
-                    span.record_exception(e)
-                    span.set_status(Status(StatusCode.ERROR))
-                    span.end()
-                    raise
+                    except Exception as e:
+                        span.record_exception(e)
+                        span.set_status(Status(StatusCode.ERROR))
+                        raise
 
             return wrapped_send
 
