@@ -116,6 +116,7 @@ class TestSyncStreamWrapper:
         mock_httpx_response.status_code = 200
         mock_httpx_response.request.url = "https://api.openai.com/v1/test"
         mock_httpx_response.request.content = b"request data"
+        mock_httpx_response.request.stream = b""
 
         parent_attributes = {"parent_attr": "parent_value"}
 
@@ -292,6 +293,7 @@ class TestSyncStreamWrapper:
         mock_httpx_response.status_code = 200
         mock_httpx_response.request.url = "https://api.openai.com/v1/test"
         mock_httpx_response.request.content = b"request_body"
+        mock_httpx_response.request.stream = b""
 
         wrapper = SyncStreamWrapper(
             response=mock_httpx_response,

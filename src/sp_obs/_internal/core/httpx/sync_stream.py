@@ -56,7 +56,10 @@ class SyncStreamWrapper(SyncByteStream):
                 span.set_attribute("http.status_code", status_code)
                 span.set_attribute("http.url", str(request.url))
                 span.set_attribute("http.host", url.hostname)
-                span.set_attribute("spinal.request.binary_data", memoryview(request.content))
+
+                if hasattr(request, "stream") and not isinstance(request.stream, httpx._multipart.MultipartStream):
+                    span.set_attribute("spinal.request.binary_data", memoryview(request.content))
+
                 span.set_attribute("spinal.response.binary_data", memoryview(response_data))
                 span.set_status(Status(StatusCode.OK))
 
