@@ -5,7 +5,7 @@ from typing import AsyncIterator
 import httpx
 from httpx import AsyncByteStream
 from opentelemetry.context import Context
-from opentelemetry.trace import Tracer
+from opentelemetry.trace import Tracer, Status, StatusCode
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,7 @@ class AsyncStreamWrapper(AsyncByteStream):
                     span.set_attribute("spinal.request.content_type", "streaming")
 
                 span.set_attribute("spinal.response.binary_data", memoryview(response_data))
+                span.set_status(Status(StatusCode.OK))
 
         except Exception as e:
             logger.error(f"Spinal error processing response: {e}")

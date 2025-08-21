@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 import httpx
 from httpx import SyncByteStream
 from opentelemetry.context import Context
-from opentelemetry.trace import Tracer
+from opentelemetry.trace import Tracer, Status, StatusCode
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,7 @@ class SyncStreamWrapper(SyncByteStream):
                 span.set_attribute("http.host", url.hostname)
                 span.set_attribute("spinal.request.binary_data", memoryview(request.content))
                 span.set_attribute("spinal.response.binary_data", memoryview(response_data))
+                span.set_status(Status(StatusCode.OK))
 
         except Exception as e:
             logger.error(f"Spinal error processing response: {e}")
