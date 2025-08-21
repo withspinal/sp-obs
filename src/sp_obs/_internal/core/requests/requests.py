@@ -143,6 +143,7 @@ class SpinalRequestsInstrumentor(opentelemetry.instrumentation.requests.Requests
                                 span.set_attribute("spinal.response.binary_data", memoryview(response._content))
                                 span.set_attribute("spinal.response.size", len(response._content))
                                 span.set_attribute("spinal.response.streaming", False)
+                        span.set_status(Status(StatusCode.OK))
                         return response
 
                     except Exception as e:

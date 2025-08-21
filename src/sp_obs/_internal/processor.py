@@ -61,25 +61,6 @@ class SpinalSpanProcessor(BatchSpanProcessor):
             export_timeout_millis=export_timeout_millis,
         )
 
-    def _get_span_type(self, span: ReadableSpan | Span) -> SpanType:
-        if hasattr(span, "instrumentation_scope") and span.instrumentation_scope:
-            instrumentation_name = span.instrumentation_scope.name
-            library = instrumentation_name.split(".")[2] if len(instrumentation_name.split(".")) > 2 else None
-
-            match library:
-                case "httpx":
-                    return SpanType.HTTPX
-                case "anthropic":
-                    return SpanType.GEN_AI
-                case "openai":
-                    return SpanType.GEN_AI
-                case "openai_agents":
-                    return SpanType.GEN_AI
-                case _:
-                    return SpanType.UNKNOWN
-
-        return SpanType.UNKNOWN
-
     def _should_process(self, span: ReadableSpan | Span) -> bool:
         """
         Determines whether a given span should be processed or not based on its type

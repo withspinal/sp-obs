@@ -2,7 +2,7 @@ import typing
 import logging
 import uuid
 
-from opentelemetry import baggage, context
+from opentelemetry import baggage, context, trace
 
 from ._internal import SPINAL_NAMESPACE
 
@@ -35,19 +35,18 @@ class tag:
         self.aggregation_id = aggregation_id
         self.kwargs = kwargs
         self.token = None
+        self.span = None
+        self.is_context_manager = False
         self._apply_tags()
 
     def _apply_tags(self):
         """Apply tags to the current context baggage"""
         current_context = context.get_current()
-
         baggage_to_add = {}
 
-        # Handle aggregation_id if provided
         if self.aggregation_id:
             baggage_to_add[f"{SPINAL_NAMESPACE}_aggregation_id"] = str(self.aggregation_id)
 
-        # Add all other keyword arguments
         for key, value in self.kwargs.items():
             baggage_key = f"{SPINAL_NAMESPACE}.tag.{key}"
             baggage_to_add[baggage_key] = str(value)
@@ -58,17 +57,27 @@ class tag:
 
         # Attach the updated context and save the token
         self.token = context.attach(current_context)
-
         logger.debug(f"Added tags to baggage: {baggage_to_add}")
 
     def __enter__(self):
         """Enter the context manager"""
-        # Tags are already applied in __init__
+        current_span = trace.get_current_span()
+        if not current_span or not current_span.is_recording():
+            # No active span - create one to establish trace context
+            tracer = trace.get_tracer(__name__)
+            self.span_context_manager = tracer.start_as_current_span("spinal.tag_context")
+            self.span_context_manager.__enter__()
+            logger.debug("Created new span for tag context manager")
+
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit the context manager"""
-        # Detach the context if we have a token
+        if self.span_context_manager:
+            self.span_context_manager.__exit__(exc_type, exc_val, exc_tb)
+            logger.debug("Ended span for tag context manager")
+
+        # Detach the baggage context
         if self.token:
             context.detach(self.token)
         return False
