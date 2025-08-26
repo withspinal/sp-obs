@@ -11,14 +11,11 @@ class ElevenLabsProvider(BaseProvider):
 
         # Check if words exist and extract the end timestamp of the last word for speech to text
         if words := response_attributes.get("words"):
-            # Sort words by start time to ensure chronological order
-            if isinstance(words, list) and len(words) > 0:
-                # Sort by end time, extract end of last word
+            try:
                 last_word = max(words, key=lambda w: w["end"])
-
-                if isinstance(last_word, dict) and "end" in last_word and last_word["end"] is not None:
-                    # Dictionary with 'end' key
-                    response_attributes["elevenlabs.last_word_end"] = last_word["end"]
+                response_attributes["elevenlabs.last_word_end"] = last_word["end"]
+            except (KeyError, TypeError, ValueError):
+                pass
 
         # Remove the words field after processing
         response_attributes.pop("words", None)
