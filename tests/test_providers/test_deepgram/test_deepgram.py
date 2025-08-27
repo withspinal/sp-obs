@@ -8,7 +8,7 @@ class TestDeepgramProvider:
     """Test Deepgram provider functionality"""
 
     @pytest.fixture
-    def sample_response_attributes(self) -> Dict[str, Any]:
+    def sample_response_attributes_stt(self) -> Dict[str, Any]:
         """Provide sample Deepgram response attributes from actual span"""
         return {
             "http.method": "POST",
@@ -23,9 +23,9 @@ class TestDeepgramProvider:
             "url": "https://dpgr.am/spacewalk.wav",
             "metadata": {
                 "transaction_key": "deprecated",
-                "request_id": "4bdfce43-cb5a-402f-bedf-d07bd361becf",
+                "request_id": "4bda55e2-4327-472c-ab7f-9933bf326c2a",
                 "sha256": "154e291ecfa8be6ab8343560bcc109008fa7853eb5372533e8efdefc9b504c33",
-                "created": "2025-08-26T15:27:05.207Z",
+                "created": "2025-08-27T17:10:10.135Z",
                 "duration": 25.933313,
                 "channels": 1,
                 "models": ["2187e11a-3532-4498-b076-81fa530bdd49"],
@@ -36,6 +36,27 @@ class TestDeepgramProvider:
                         "arch": "nova-3",
                     }
                 },
+                "summary_info": {
+                    "model_uuid": "67875a7f-c9c4-48a0-aa55-5bdb8a91c34a",
+                    "input_tokens": 83,
+                    "output_tokens": 64,
+                },
+                "intents_info": {
+                    "model_uuid": "80ab3179-d113-4254-bd6b-4a2f96498695",
+                    "input_tokens": 82,
+                    "output_tokens": 10,
+                },
+                "sentiment_info": {
+                    "model_uuid": "80ab3179-d113-4254-bd6b-4a2f96498695",
+                    "input_tokens": 82,
+                    "output_tokens": 82,
+                },
+                "topics_info": {
+                    "model_uuid": "80ab3179-d113-4254-bd6b-4a2f96498695",
+                    "input_tokens": 82,
+                    "output_tokens": 7,
+                },
+                "extra": {"experiment": "max", "customer_id": "12345"},
             },
             "results": {
                 "channels": [
@@ -61,10 +82,54 @@ class TestDeepgramProvider:
             "instrumentation_info": {"name": "sp_obs._internal.core.httpx.httpx", "version": ""},
         }
 
-    def test_provider_identification(self, sample_response_attributes):
+    def test_provider_identification(self, sample_response_attributes_stt):
         """Test that the provider is identified correctly"""
-        provider = get_provider(sample_response_attributes["spinal.provider"])
+        provider = get_provider(sample_response_attributes_stt["spinal.provider"])
 
         from sp_obs._internal.core.providers import DeepgramProvider
 
         assert isinstance(provider, DeepgramProvider), f"Expected DeepgramProvider instance, got {type(provider)}"
+
+    def test_parse_stt_response_attributes(self, sample_response_attributes_stt):
+        """Test that the STT response is scrubbed and duration is extracted"""
+        provider = get_provider(sample_response_attributes_stt["spinal.provider"])
+
+        parsed = provider.parse_response_attributes(sample_response_attributes_stt)
+
+        assert "results" not in parsed
+        assert "metadata" not in parsed
+        assert "extra" not in parsed
+
+        assert parsed["duration"] == 25.933313
+        assert parsed["summary_info"] == {
+            "model_uuid": "67875a7f-c9c4-48a0-aa55-5bdb8a91c34a",
+            "input_tokens": 83,
+            "output_tokens": 64,
+        }
+
+        assert parsed["sentiment_info"] == {
+            "model_uuid": "80ab3179-d113-4254-bd6b-4a2f96498695",
+            "input_tokens": 82,
+            "output_tokens": 82,
+        }
+
+        assert parsed["topics_info"] == {
+            "model_uuid": "80ab3179-d113-4254-bd6b-4a2f96498695",
+            "input_tokens": 82,
+            "output_tokens": 7,
+        }
+
+        assert parsed["intents_info"] == {
+            "model_uuid": "80ab3179-d113-4254-bd6b-4a2f96498695",
+            "input_tokens": 82,
+            "output_tokens": 10,
+        }
+
+    def test_handle_response_with_no_words(self, sample_response_attributes_stt):
+        """Test that the provider handles a response with no words correctly"""
+        provider = get_provider(sample_response_attributes_stt["spinal.provider"])
+        parsed = provider.parse_response_attributes(sample_response_attributes_stt)
+        assert "words" not in parsed
+
+    # we do not need to test for tts as there is nothing returned but audio bytestream,
+    # price is determined by number of characters in input text

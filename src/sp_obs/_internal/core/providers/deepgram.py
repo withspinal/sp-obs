@@ -10,21 +10,28 @@ class DeepgramProvider(BaseProvider):
         """Parse response attributes to extract timing information for speech to text"""
 
         # can pop results as duration is provided in metadata
+
+        # keep only duration and token information from metadata, then remove metadata entirely
+        if metadata := response_attributes.get("metadata"):
+            # Extract duration
+            if duration := metadata.get("duration"):
+                response_attributes["duration"] = duration
+
+            # Extract additional cost information if they exist
+            if summary_info := metadata.get("summary_info"):
+                response_attributes["summary_info"] = summary_info
+
+            if sentiment_info := metadata.get("sentiment_info"):
+                response_attributes["sentiment_info"] = sentiment_info
+
+            if topics_info := metadata.get("topics_info"):
+                response_attributes["topics_info"] = topics_info
+
+            if intents_info := metadata.get("intents_info"):
+                response_attributes["intents_info"] = intents_info
+
+        # remove full metadata object to avoid storing sensitive/unnecessary fields
+        response_attributes.pop("metadata", None)
         response_attributes.pop("results", None)
 
-        # keep only duration from metadata, then remove metadata entirely
-        metadata = response_attributes.get("metadata")
-        if isinstance(metadata, dict):
-            duration = metadata.get("duration")
-            if duration is not None:
-                # store duration at top-level for cost calculation
-                response_attributes["duration"] = duration
-        # remove full metadata object to avoid storing sensitive/verbose fields
-        response_attributes.pop("metadata", None)
-
         return response_attributes
-
-    def handle_event_stream(self, event_stream: str) -> dict[str, Any]:
-        """Handle event stream from Deepgram API"""
-
-        return 0
