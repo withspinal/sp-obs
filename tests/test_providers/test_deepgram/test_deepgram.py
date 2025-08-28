@@ -81,7 +81,7 @@ class TestDeepgramProvider:
                     {
                         "alternatives": [
                             {
-                                "transcript": "yeah as as much as it's worth celebrating the first spacewalk with an all female team i think many of us are looking forward to it just being normal and i think if it signifies anything it is to honor the the women who came before us who were skilled and qualified and didn't get the same opportunities that we have today",
+                                "transcript": "yeah as as much as it's worth ",
                                 "confidence": 0.9984262,
                                 "words": [
                                     {"word": "yeah", "start": 0, "end": 0.48, "confidence": 0.9959291},
@@ -98,6 +98,122 @@ class TestDeepgramProvider:
             "events": [],
             "links": [],
             "instrumentation_info": {"name": "sp_obs._internal.core.httpx.httpx", "version": ""},
+        }
+
+    def test_handle_tts_response(self, sample_response_attributes_tts):
+        """Test that the provider handles a response with no words correctly"""
+        provider = get_provider(sample_response_attributes_tts["spinal.provider"])
+
+        parsed = provider.parse_response_attributes(sample_response_attributes_tts)
+
+        assert "words" not in parsed
+        assert "sentiment_info" not in parsed
+        assert "topics_info" not in parsed
+        assert "intents_info" not in parsed
+        assert "summary_info" not in parsed
+
+    @pytest.fixture
+    def sample_response_attributes_text_intelligence(self) -> Dict[str, Any]:
+        """Provide sample Deepgram text intelligence response attributes from actual span"""
+        return {
+            "http.method": "POST",
+            "spinal.provider": "deepgram",
+            "gen_ai.system": "deepgram",
+            "spinal.http.request.query.intents": "true",
+            "spinal.http.request.query.language": "en",
+            "spinal.http.request.query.sentiment": "true",
+            "spinal.http.request.query.summarize": "true",
+            "content-type": "application/json",
+            "content-encoding": "gzip",
+            "http.status_code": 200,
+            "http.url": "https://api.deepgram.com/v1/read?intents=true&language=en&sentiment=true&summarize=true",
+            "http.host": "api.deepgram.com",
+            "url": "https://static.deepgram.com/examples/aura.txt",
+            "metadata": {
+                "request_id": "71187ecf-50bf-43ce-862a-328f67100213",
+                "created": "2025-08-28T09:20:59.421Z",
+                "language": "en",
+                "summary_info": {
+                    "model_uuid": "67875a7f-c9c4-48a0-aa55-5bdb8a91c34a",
+                    "input_tokens": 1855,
+                    "output_tokens": 145,
+                },
+                "sentiment_info": {
+                    "model_uuid": "80ab3179-d113-4254-bd6b-4a2f96498695",
+                    "input_tokens": 2043,
+                    "output_tokens": 2047,
+                },
+                "intents_info": {
+                    "model_uuid": "80ab3179-d113-4254-bd6b-4a2f96498695",
+                    "input_tokens": 2043,
+                    "output_tokens": 505,
+                },
+            },
+            "results": {
+                "summary": {
+                    "text": "The potential for voice-based interfaces in conversational AI applications is discussed, with a focus on voice-premises and wearable devices. The success of voice-first experiences and tools, including DeepgramQuad, is highlighted, along with the potential for high-throughput and fast text-to-speech conversion for AI agents. The speakers emphasize the benefits of voice quality, including natural speech flow, and the importance of tailoring voice to specific applications. They also mention their involvement in machine learning and their plans to expand their waitlist for a speech-to-text model. They expect to release generally early next year, but if working on any real-time AI agent use cases, they can join their waitlist to jumpstart their development in production."
+                },
+                "intents": {
+                    "segments": [
+                        {
+                            "text": "We believe that we have reached an inflection point where voice-based interfaces will be the primary means to accessing LLMs and the experiences they unlock.",
+                            "start_word": 43,
+                            "end_word": 67,
+                            "intents": [
+                                {"intent": "Describe voice-based capabilities", "confidence_score": 0.000005833087},
+                                {
+                                    "intent": "Highlight rapid development of ai platforms",
+                                    "confidence_score": 0.0006793375,
+                                },
+                            ],
+                        }
+                    ]
+                },
+                "sentiments": {
+                    "segments": [
+                        {
+                            "text": "Meet Deepgram Aura: real-time text-to-speech for real-time AI agents",
+                            "start_word": 0,
+                            "end_word": 42,
+                            "sentiment": "neutral",
+                            "sentiment_score": 0.18202751874923703,
+                        }
+                    ],
+                    "average": {"sentiment": "neutral", "sentiment_score": 0.2622679769556058},
+                },
+            },
+            "events": [],
+            "links": [],
+            "instrumentation_info": {"name": "sp_obs._internal.core.httpx.httpx", "version": ""},
+        }
+
+    def test_handle_text_intelligence_response(self, sample_response_attributes_text_intelligence):
+        """Test that the provider handles text intelligence response correctly"""
+        provider = get_provider(sample_response_attributes_text_intelligence["spinal.provider"])
+
+        parsed = provider.parse_response_attributes(sample_response_attributes_text_intelligence)
+
+        # Verify sensitive data is removed
+        assert "results" not in parsed
+        assert "metadata" not in parsed
+
+        # Verify token information is extracted
+        assert parsed["summary_info"] == {
+            "model_uuid": "67875a7f-c9c4-48a0-aa55-5bdb8a91c34a",
+            "input_tokens": 1855,
+            "output_tokens": 145,
+        }
+
+        assert parsed["sentiment_info"] == {
+            "model_uuid": "80ab3179-d113-4254-bd6b-4a2f96498695",
+            "input_tokens": 2043,
+            "output_tokens": 2047,
+        }
+
+        assert parsed["intents_info"] == {
+            "model_uuid": "80ab3179-d113-4254-bd6b-4a2f96498695",
+            "input_tokens": 2043,
+            "output_tokens": 505,
         }
 
     def test_provider_identification(self, sample_response_attributes_stt):
@@ -142,18 +258,3 @@ class TestDeepgramProvider:
             "input_tokens": 82,
             "output_tokens": 10,
         }
-
-    def test_handle_tts_response(self, sample_response_attributes_tts):
-        """Test that the provider handles a response with no words correctly"""
-        provider = get_provider(sample_response_attributes_tts["spinal.provider"])
-
-        parsed = provider.parse_response_attributes(sample_response_attributes_tts)
-
-        assert "words" not in parsed
-        assert "sentiment_info" not in parsed
-        assert "topics_info" not in parsed
-        assert "intents_info" not in parsed
-        assert "summary_info" not in parsed
-
-
-# we do not need to test text intelligence as responses are structured the same as audio intelligence for stt
