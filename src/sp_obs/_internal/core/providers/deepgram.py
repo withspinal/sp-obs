@@ -17,6 +17,12 @@ class DeepgramProvider(BaseProvider):
             if duration := metadata.get("duration"):
                 response_attributes["duration"] = duration
 
+            # Extract model name from model_info
+            if model_info := metadata.get("model_info"):
+                # Get the first model (usually there's only one)
+                if model_name := model_info.get("name"):
+                    response_attributes["model_name"] = model_name
+
             # Extract additional cost information if they exist
             if summary_info := metadata.get("summary_info"):
                 response_attributes["summary_info"] = summary_info
