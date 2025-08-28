@@ -100,18 +100,6 @@ class TestDeepgramProvider:
             "instrumentation_info": {"name": "sp_obs._internal.core.httpx.httpx", "version": ""},
         }
 
-    def test_handle_tts_response(self, sample_response_attributes_tts):
-        """Test that the provider handles a response with no words correctly"""
-        provider = get_provider(sample_response_attributes_tts["spinal.provider"])
-
-        parsed = provider.parse_response_attributes(sample_response_attributes_tts)
-
-        assert "words" not in parsed
-        assert "sentiment_info" not in parsed
-        assert "topics_info" not in parsed
-        assert "intents_info" not in parsed
-        assert "summary_info" not in parsed
-
     @pytest.fixture
     def sample_response_attributes_text_intelligence(self) -> Dict[str, Any]:
         """Provide sample Deepgram text intelligence response attributes from actual span"""
@@ -187,35 +175,6 @@ class TestDeepgramProvider:
             "instrumentation_info": {"name": "sp_obs._internal.core.httpx.httpx", "version": ""},
         }
 
-    def test_handle_text_intelligence_response(self, sample_response_attributes_text_intelligence):
-        """Test that the provider handles text intelligence response correctly"""
-        provider = get_provider(sample_response_attributes_text_intelligence["spinal.provider"])
-
-        parsed = provider.parse_response_attributes(sample_response_attributes_text_intelligence)
-
-        # Verify sensitive data is removed
-        assert "results" not in parsed
-        assert "metadata" not in parsed
-
-        # Verify token information is extracted
-        assert parsed["summary_info"] == {
-            "model_uuid": "67875a7f-c9c4-48a0-aa55-5bdb8a91c34a",
-            "input_tokens": 1855,
-            "output_tokens": 145,
-        }
-
-        assert parsed["sentiment_info"] == {
-            "model_uuid": "80ab3179-d113-4254-bd6b-4a2f96498695",
-            "input_tokens": 2043,
-            "output_tokens": 2047,
-        }
-
-        assert parsed["intents_info"] == {
-            "model_uuid": "80ab3179-d113-4254-bd6b-4a2f96498695",
-            "input_tokens": 2043,
-            "output_tokens": 505,
-        }
-
     def test_provider_identification(self, sample_response_attributes_stt):
         """Test that the provider is identified correctly"""
         provider = get_provider(sample_response_attributes_stt["spinal.provider"])
@@ -257,4 +216,45 @@ class TestDeepgramProvider:
             "model_uuid": "80ab3179-d113-4254-bd6b-4a2f96498695",
             "input_tokens": 82,
             "output_tokens": 10,
+        }
+
+    def test_handle_tts_response(self, sample_response_attributes_tts):
+        """Test that the provider handles a response with no words correctly"""
+        provider = get_provider(sample_response_attributes_tts["spinal.provider"])
+
+        parsed = provider.parse_response_attributes(sample_response_attributes_tts)
+
+        assert "words" not in parsed
+        assert "sentiment_info" not in parsed
+        assert "topics_info" not in parsed
+        assert "intents_info" not in parsed
+        assert "summary_info" not in parsed
+
+    def test_handle_text_intelligence_response(self, sample_response_attributes_text_intelligence):
+        """Test that the provider handles text intelligence response correctly"""
+        provider = get_provider(sample_response_attributes_text_intelligence["spinal.provider"])
+
+        parsed = provider.parse_response_attributes(sample_response_attributes_text_intelligence)
+
+        # Verify sensitive data is removed
+        assert "results" not in parsed
+        assert "metadata" not in parsed
+
+        # Verify token information is extracted
+        assert parsed["summary_info"] == {
+            "model_uuid": "67875a7f-c9c4-48a0-aa55-5bdb8a91c34a",
+            "input_tokens": 1855,
+            "output_tokens": 145,
+        }
+
+        assert parsed["sentiment_info"] == {
+            "model_uuid": "80ab3179-d113-4254-bd6b-4a2f96498695",
+            "input_tokens": 2043,
+            "output_tokens": 2047,
+        }
+
+        assert parsed["intents_info"] == {
+            "model_uuid": "80ab3179-d113-4254-bd6b-4a2f96498695",
+            "input_tokens": 2043,
+            "output_tokens": 505,
         }
