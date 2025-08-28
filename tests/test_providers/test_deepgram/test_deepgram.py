@@ -8,6 +8,24 @@ class TestDeepgramProvider:
     """Test Deepgram provider functionality"""
 
     @pytest.fixture
+    def sample_response_attributes_tts(self) -> Dict[str, Any]:
+        """Provide sample Deepgram TTS response attributes from actual span"""
+        return {
+            "http.method": "POST",
+            "spinal.provider": "deepgram",
+            "gen_ai.system": "deepgram",
+            "spinal.http.request.query.model": "aura-2-thalia-en",
+            "content-type": "audio/mpeg",
+            "content-encoding": "",
+            "http.status_code": 200,
+            "http.url": "https://api.deepgram.com/v1/speak?model=aura-2-thalia-en",
+            "http.host": "api.deepgram.com",
+            "text": "Hello world!",
+            "audio_size_bytes": 7776,
+            "audio_format": "audio/mpeg",
+        }
+
+    @pytest.fixture
     def sample_response_attributes_stt(self) -> Dict[str, Any]:
         """Provide sample Deepgram response attributes from actual span"""
         return {
@@ -125,11 +143,17 @@ class TestDeepgramProvider:
             "output_tokens": 10,
         }
 
-    def test_handle_response_with_no_words(self, sample_response_attributes_stt):
+    def test_handle_tts_response(self, sample_response_attributes_tts):
         """Test that the provider handles a response with no words correctly"""
-        provider = get_provider(sample_response_attributes_stt["spinal.provider"])
-        parsed = provider.parse_response_attributes(sample_response_attributes_stt)
-        assert "words" not in parsed
+        provider = get_provider(sample_response_attributes_tts["spinal.provider"])
 
-    # we do not need to test for tts as there is nothing returned but audio bytestream,
-    # price is determined by number of characters in input text
+        parsed = provider.parse_response_attributes(sample_response_attributes_tts)
+
+        assert "words" not in parsed
+        assert "sentiment_info" not in parsed
+        assert "topics_info" not in parsed
+        assert "intents_info" not in parsed
+        assert "summary_info" not in parsed
+
+
+# we do not need to test text intelligence as responses are structured the same as audio intelligence for stt
