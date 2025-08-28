@@ -11,15 +11,14 @@ class DeepgramProvider(BaseProvider):
 
         # can pop results as duration is provided in metadata
 
-        # keep only duration and token information from metadata, then remove metadata entirely
+        # keep only valuable field from metadata if they exist , then delkete the metadata field
         if metadata := response_attributes.get("metadata"):
             # Extract duration
             if duration := metadata.get("duration"):
                 response_attributes["duration"] = duration
 
-            # Extract model name and architecture from model_info
+            # Extract model name and architecture from model_info if its given
             if model_info := metadata.get("model_info"):
-                # Get the first model (usually there's only one)
                 for model_id, model_details in model_info.items():
                     if model_name := model_details.get("name"):
                         arch = model_details.get("arch", "")
