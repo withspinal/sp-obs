@@ -177,8 +177,6 @@ class SpinalSpanExporter(SpanExporter):
             try:
                 response_attributes = orjson.loads(text_data)
             except Exception as e:
-                logger.warning(f"Failed to parse JSON response: {e}")
-                logger.warning(f"Content preview: {text_data[:200]}")
                 response_attributes = {"raw_content": text_data, "parse_error": str(e), "content_type": content_type}
 
         response_attributes = provider.parse_response_attributes(response_attributes)
