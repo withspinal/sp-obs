@@ -23,5 +23,4 @@ class ScrapingBeeProvider(BaseProvider):
         """
         Parses and processes the response attributes by removing unnecessary fields.
         """
-
         return {}
