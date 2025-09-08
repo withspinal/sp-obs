@@ -178,6 +178,9 @@ class TestSpinalRequestsInstrumentor:
                     # Call with stream=True
                     _ = Session.send(session, request, stream=True)
 
+                    # Consume the stream so the span ends
+                    _ = list(_.iter_content(chunk_size=1))
+
                     # Verify streaming setup was applied
                     # Note: For streaming, span is not ended immediately
                     finished_spans = in_memory_span_exporter.get_finished_spans()

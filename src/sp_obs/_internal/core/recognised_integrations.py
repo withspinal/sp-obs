@@ -9,6 +9,7 @@ TOOLS_INTEGRATION = {
     "api.firecrawl.dev": "firecrawl",
     "app.scrapingbee.com": "scrapingbee",
     "api.deepgram.com": "deepgram",
+    "api.perplexity.ai": "perplexity",
 }
 
 INTEGRATIONS = GEN_AI_INTEGRATION | TOOLS_INTEGRATION

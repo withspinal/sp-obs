@@ -6,6 +6,7 @@ from sp_obs._internal.core.providers.scrapingbee import ScrapingBeeProvider
 from sp_obs._internal.core.providers.serpapi import SerpapiProvider
 from sp_obs._internal.core.providers.elevenlabs import ElevenLabsProvider
 from sp_obs._internal.core.providers.deepgram import DeepgramProvider
+from sp_obs._internal.core.providers.perplexity import PerplexityProvider
 
 _provider_cache = {}
 
@@ -26,6 +27,8 @@ def get_provider(provider_name: str) -> BaseProvider:
             _provider_cache[provider_name] = ElevenLabsProvider()
         elif provider_name == "deepgram":
             _provider_cache[provider_name] = DeepgramProvider()
+        elif provider_name == "perplexity":
+            _provider_cache[provider_name] = PerplexityProvider()
         else:
             raise ValueError(f"Invalid provider name: {provider_name}")
 
