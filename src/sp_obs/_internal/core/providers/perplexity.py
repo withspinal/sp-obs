@@ -18,6 +18,7 @@ class PerplexityProvider(BaseProvider):
         Parse Server-Sent Events format and extract the final response.
         """
         usage = None
+        model = None
         lines = event_stream.split("\n")
 
         for line in lines:
@@ -30,9 +31,12 @@ class PerplexityProvider(BaseProvider):
             obj = orjson.loads(data)
             if obj.get("usage"):
                 usage = obj["usage"]
+            if obj.get("model"):
+                model = obj["model"]
 
         final_response_attributes = {
             "usage": usage,
+            "model": model,
         }
 
         return final_response_attributes
