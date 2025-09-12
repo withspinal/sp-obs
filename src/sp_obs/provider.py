@@ -18,9 +18,12 @@ class tag:
 
     Args:
         aggregation_id: Optional aggregation ID for distributed tracing
+        org_id: Optional organization ID useful for representing a group of users
+        user_id: Optional user ID used to represent a single user
+        workflow_id: Optional workflow ID useful for tracking a single workflow
         **kwargs: Any number of keyword arguments to be added as tags
 
-    All keyword arguments are added as tags to the baggage with the 'spinal.' prefix.
+    All keyword arguments are added as tags to the baggage with the 'spinal.tag.' prefix.
 
     Examples:
         # As a context manager
@@ -31,8 +34,18 @@ class tag:
         add_tag(workflow_id="123", user_id="456", custom_field="value")
     """
 
-    def __init__(self, aggregation_id: typing.Union[int, str, uuid.UUID] = None, **kwargs):
+    def __init__(
+        self,
+        aggregation_id: typing.Union[int, str, uuid.UUID] = None,
+        org_id: typing.Union[int, str, uuid.UUID] = None,
+        user_id: typing.Union[int, str, uuid.UUID] = None,
+        workflow_id: typing.Union[int, str, uuid.UUID] = None,
+        **kwargs,
+    ):
         self.aggregation_id = aggregation_id
+        self.org_id = org_id
+        self.user_id = user_id
+        self.workflow_id = workflow_id
         self.kwargs = kwargs
         self.token = None
         self.span = None
@@ -46,6 +59,15 @@ class tag:
 
         if self.aggregation_id:
             baggage_to_add[f"{SPINAL_NAMESPACE}_aggregation_id"] = str(self.aggregation_id)
+
+        if self.org_id:
+            baggage_to_add[f"{SPINAL_NAMESPACE}_org_id"] = str(self.org_id)
+
+        if self.user_id:
+            baggage_to_add[f"{SPINAL_NAMESPACE}_user_id"] = str(self.user_id)
+
+        if self.workflow_id:
+            baggage_to_add[f"{SPINAL_NAMESPACE}_workflow_id"] = str(self.workflow_id)
 
         for key, value in self.kwargs.items():
             baggage_key = f"{SPINAL_NAMESPACE}.tag.{key}"
