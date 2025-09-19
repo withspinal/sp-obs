@@ -1,1 +1,1 @@
-from .constants import SPINAL_NAMESPACE
+from .constants import SPINAL_NAMESPACE, SPINAL_BILLING_SPAN_NAME
