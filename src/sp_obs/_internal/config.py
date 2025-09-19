@@ -1,3 +1,4 @@
+import threading
 import typing
 from os import environ
 import logging
@@ -56,6 +57,7 @@ class SpinalConfig:
         export_timeout_millis: float | None = None,
         scrubber: Optional[SpinalScrubber] = None,
         opentelemetry_log_level: str = logging.ERROR,
+        set_global_tracer: bool = True,
     ):
         self.endpoint = endpoint or environ.get("SPINAL_TRACING_ENDPOINT") or "https://cloud.withspinal.com"
         self.api_key = api_key or environ.get("SPINAL_API_KEY", "")
@@ -69,6 +71,8 @@ class SpinalConfig:
         self.max_export_batch_size = max_export_batch_size or SpinalConfig._default_max_export_batch_size()
         self.schedule_delay_millis = schedule_delay_millis or SpinalConfig._default_schedule_delay_millis()
         self.export_timeout_millis = export_timeout_millis or SpinalConfig._default_export_timeout_millis()
+
+        self.set_global_tracer = set_global_tracer
 
         if not self.endpoint:
             raise ValueError("Spinal endpoint must be provided either via parameter or SPINAL_TRACING_ENDPOINT env var")
@@ -134,82 +138,132 @@ class SpinalConfig:
             return _DEFAULT_EXPORT_TIMEOUT_MILLIS
 
 
-_global_config: Optional[SpinalConfig] = None
+class SpinalSDK:
+    """Singleton SDK instance that manages configuration and tracer provider"""
+
+    _instance: Optional["SpinalSDK"] = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
+                    cls._instance.config: SpinalConfig | None = None
+                    cls._instance.tracer_provider: SpinalTracerProvider | None = None
+        return cls._instance
+
+    def configure(
+        self,
+        *,
+        endpoint: str | None = None,
+        api_key: str | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: int = 5,
+        max_queue_size: int | None = None,
+        max_export_batch_size: int | None = None,
+        schedule_delay_millis: float | None = None,
+        export_timeout_millis: float | None = None,
+        scrubber: SpinalScrubber | None = None,
+        set_global_tracer: bool = True,
+    ) -> SpinalConfig:
+        """
+        Configures the global Spinal SDK settings and initializes the Spinal configuration.
+
+        This function allows setting up various configuration parameters such as the API endpoint,
+        authentication details, request headers, timeout values, batch processing options,
+        debugging mode, and a data scrubber. It also initializes auto instrumentation with a
+        Spinal tracer provider and logs the configuration status.
+
+        Parameters:
+        endpoint: str | None
+            The API endpoint to interact with. None if not specified.
+        api_key: str | None
+            The API key for authentication. None if not provided.
+        headers: dict[str, str] | None
+            Additional headers to include in requests. None by default.
+        timeout: int
+            The timeout in seconds for requests. Default is 5 seconds.
+        max_queue_size: int | None
+            Maximum size of the request queue. None for no limit.
+        max_export_batch_size: int | None
+            Maximum number of events to export at one time. None if not specified.
+        schedule_delay_millis: float | None
+            The delay in milliseconds between scheduled task executions. None if not set.
+        export_timeout_millis: float | None
+            Timeout in milliseconds for exporting operations. None if not configured.
+        scrubber: SpinalScrubber | None
+            A configuration scrubber for cleaning sensitive data. None to disable.
+        set_global_tracer: bool
+            If set, will configure the global tracer provider to Spinals. Default is True.
+            Turn off if you are using an observability framework that already has a global tracer provider.
+
+        Returns:
+        SpinalConfig
+            The updated Spinal configuration instance.
+
+        """
+        with self._lock:
+            if self._initialized:
+                logger.debug("SDK already configured, returning existing configuration")
+                return self.config
+
+            self.config = SpinalConfig(
+                endpoint=endpoint,
+                api_key=api_key,
+                headers=headers,
+                timeout=timeout,
+                scrubber=scrubber,
+                max_queue_size=max_queue_size,
+                max_export_batch_size=max_export_batch_size,
+                schedule_delay_millis=schedule_delay_millis,
+                export_timeout_millis=export_timeout_millis,
+                set_global_tracer=set_global_tracer,
+            )
+
+            # Setup auto instrumentation
+            self.tracer_provider = SpinalTracerProvider(self.config)
+            SpinalHTTPXClientInstrumentor().instrument(tracer_provider=self.tracer_provider.provider)
+            SpinalRequestsInstrumentor().instrument(tracer_provider=self.tracer_provider.provider)
+
+            # Add to params to redact util
+            PARAMS_TO_REDACT.append("api_key")
+            PARAMS_TO_REDACT.append("serp_api_key")
+
+            self._initialized = True
+            logger.info(f"Spinal SDK configured with endpoint: {self.config.endpoint}")
+            return self.config
+
+    def get_config(self) -> SpinalConfig:
+        """Get the global Spinal configuration"""
+        if not self._initialized:
+            return self.configure()
+        return self.config
+
+    def get_tracer_provider(self) -> Optional[SpinalTracerProvider]:
+        """Get the tracer provider, returns None if not configured"""
+        return self.tracer_provider
+
+    def is_configured(self) -> bool:
+        """Check if SDK is configured"""
+        return self._initialized
 
 
-def configure(
-    endpoint: str | None = None,
-    api_key: str | None = None,
-    headers: dict[str, str] | None = None,
-    timeout: int = 5,
-    max_queue_size: int | None = None,
-    max_export_batch_size: int | None = None,
-    schedule_delay_millis: float | None = None,
-    export_timeout_millis: float | None = None,
-    scrubber: SpinalScrubber | None = None,
-) -> SpinalConfig:
-    """
-    Configures the global Spinal SDK settings and initializes the Spinal configuration.
+# Create the singleton instance
+_sdk = SpinalSDK()
 
-    This function allows setting up various configuration parameters such as the API endpoint,
-    authentication details, request headers, timeout values, batch processing options,
-    debugging mode, and a data scrubber. It also initializes auto instrumentation with a
-    Spinal tracer provider and logs the configuration status.
 
-    Parameters:
-    endpoint: str | None
-        The API endpoint to interact with. None if not specified.
-    api_key: str | None
-        The API key for authentication. None if not provided.
-    headers: dict[str, str] | None
-        Additional headers to include in requests. None by default.
-    timeout: int
-        The timeout in seconds for requests. Default is 5 seconds.
-    max_queue_size: int | None
-        Maximum size of the request queue. None for no limit.
-    max_export_batch_size: int | None
-        Maximum number of events to export at one time. None if not specified.
-    schedule_delay_millis: float | None
-        The delay in milliseconds between scheduled task executions. None if not set.
-    export_timeout_millis: float | None
-        Timeout in milliseconds for exporting operations. None if not configured.
-    scrubber: SpinalScrubber | None
-        A configuration scrubber for cleaning sensitive data. None to disable.
+def configure(**kwargs) -> SpinalConfig:
+    """Configure the global Spinal SDK instance"""
+    return _sdk.configure(**kwargs)
 
-    Returns:
-    SpinalConfig
-        The updated Spinal configuration instance.
 
-    """
-    global _global_config
-
-    _global_config = SpinalConfig(
-        endpoint=endpoint,
-        api_key=api_key,
-        headers=headers,
-        timeout=timeout,
-        scrubber=scrubber,
-        max_queue_size=max_queue_size,
-        max_export_batch_size=max_export_batch_size,
-        schedule_delay_millis=schedule_delay_millis,
-        export_timeout_millis=export_timeout_millis,
-    )
-
-    # Setup auto instrumentation
-    tracer_provider = SpinalTracerProvider(_global_config)
-    SpinalHTTPXClientInstrumentor().instrument(tracer_provider=tracer_provider.provider)
-    SpinalRequestsInstrumentor().instrument(tracer_provider=tracer_provider.provider)
-
-    # Add to params to redact util
-    PARAMS_TO_REDACT.append("api_key")
-    PARAMS_TO_REDACT.append("serp_api_key")
-
-    logger.info(f"Spinal SDK configured with endpoint: {_global_config.endpoint}")
-    return _global_config
+def get_tracer_provider():
+    """Get the configured tracer provider"""
+    return _sdk.get_tracer_provider()
 
 
 def get_config() -> SpinalConfig:
     """Get the global Spinal configuration"""
-    if not _global_config:
-        return configure()
-    return _global_config
+    return _sdk.get_config()

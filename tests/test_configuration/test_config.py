@@ -6,7 +6,7 @@ import pytest
 import os
 from unittest.mock import patch
 
-from sp_obs._internal.config import SpinalConfig, configure, get_config
+from sp_obs._internal.config import SpinalConfig, SpinalSDK, configure, get_config
 from sp_obs import DefaultScrubber
 
 
@@ -152,8 +152,14 @@ class TestGlobalConfiguration:
 
     def setup_method(self):
         """Reset global config before each test"""
-        global _global_config
-        _global_config = None
+        # Reset the SDK singleton to ensure test isolation
+        from sp_obs._internal.config import _sdk
+
+        SpinalSDK._instance = None
+        SpinalSDK._initialized = False
+        _sdk._initialized = False
+        _sdk.config = None
+        _sdk.tracer_provider = None
 
     def test_configure_function(self):
         """Test the global configure function.
@@ -182,7 +188,6 @@ class TestGlobalConfiguration:
     @patch.dict(os.environ, {"SPINAL_API_KEY": "test-key"})
     def test_get_config_initially_none(self):
         """Test get_config calls configure when no global config exists.
-
         Tests that get_config() calls configure() when no global config exists.
         """
         # Mock the instrumentation to avoid actual setup
@@ -190,13 +195,12 @@ class TestGlobalConfiguration:
             with patch("sp_obs._internal.config.SpinalHTTPXClientInstrumentor"):
                 with patch("sp_obs._internal.config.SpinalRequestsInstrumentor"):
                     # Patch the global config to None to simulate first call
-                    with patch("sp_obs._internal.config._global_config", None):
-                        config = get_config()
+                    config = get_config()
 
-                        # Should return a configured SpinalConfig instance
-                        assert isinstance(config, SpinalConfig)
-                        assert config.endpoint == "https://cloud.withspinal.com"  # default
-                        assert config.api_key == "test-key"
+                    # Should return a configured SpinalConfig instance
+                    assert isinstance(config, SpinalConfig)
+                    assert config.endpoint == "https://cloud.withspinal.com"  # default
+                    assert config.api_key == "test-key"
 
     def test_get_config_returns_existing(self):
         """Test get_config returns existing configuration.
@@ -215,9 +219,11 @@ class TestGlobalConfiguration:
                     assert config is test_config
 
     def test_reconfigure(self):
-        """Test reconfiguring overwrites previous config.
+        """Test that reconfiguration is prevented after initial setup.
 
-        Tests that calling configure() multiple times overwrites the global configuration.
+        Tests that calling configure() multiple times returns the same configuration.
+        Once configured, the SDK prevents reconfiguration to avoid issues with
+        already-instrumented components.
         """
         # Mock the instrumentation to avoid actual setup
         with patch("sp_obs._internal.config.SpinalTracerProvider"):
@@ -226,16 +232,16 @@ class TestGlobalConfiguration:
                     # First configuration
                     config1 = configure(endpoint="https://api1.example.com", api_key="key1")
 
-                    # Second configuration
+                    # Second configuration attempt - should return the same config
                     config2 = configure(endpoint="https://api2.example.com", api_key="key2")
 
-        # Should be different instances
-        assert config1 != config2
-        assert config2.endpoint == "https://api2.example.com"
-        assert config2.api_key == "key2"
+        # Should be the same instance since reconfiguration is prevented
+        assert config1 is config2
+        assert config2.endpoint == "https://api1.example.com"  # Still the first config
+        assert config2.api_key == "key1"  # Still the first config
 
-        # Global config should be the latest
-        assert get_config() == config2
+        # Global config should be the same as the original
+        assert get_config() is config1
 
     def test_configure_sets_up_instrumentation(self):
         """Test configure function sets up instrumentation.

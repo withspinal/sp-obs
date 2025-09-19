@@ -7,6 +7,10 @@ from opentelemetry.sdk.trace import ReadableSpan, Span
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from sp_obs._internal import SPINAL_NAMESPACE
+
+if typing.TYPE_CHECKING:
+    from sp_obs._internal.config import SpinalConfig
+
 from sp_obs._internal.exporter import SpinalSpanExporter
 
 logger = logging.getLogger(__name__)
@@ -32,13 +36,10 @@ class SpinalSpanProcessor(BatchSpanProcessor):
 
     def __init__(
         self,
-        max_queue_size: int,
-        schedule_delay_millis: float,
-        max_export_batch_size: int,
-        export_timeout_millis: float,
+        config: "SpinalConfig",
     ):
         """
-        Parameters:
+        Necessary arguments for the BatchSpanProcessor class:
             max_queue_size: int
                 The maximum number of spans allowed in the queue. When the queue is full, additional spans are dropped.
 
@@ -51,14 +52,13 @@ class SpinalSpanProcessor(BatchSpanProcessor):
             export_timeout_millis: float
                 The timeout in milliseconds for exporting spans.
         """
-
-        self.exporter = SpinalSpanExporter()
+        self.exporter = SpinalSpanExporter(config)
         super().__init__(
             self.exporter,
-            max_queue_size=max_queue_size,
-            schedule_delay_millis=schedule_delay_millis,
-            max_export_batch_size=max_export_batch_size,
-            export_timeout_millis=export_timeout_millis,
+            max_queue_size=config.max_queue_size,
+            schedule_delay_millis=config.schedule_delay_millis,
+            max_export_batch_size=config.max_export_batch_size,
+            export_timeout_millis=config.export_timeout_millis,
         )
 
     def _should_process(self, span: ReadableSpan | Span) -> bool:
@@ -69,7 +69,7 @@ class SpinalSpanProcessor(BatchSpanProcessor):
         if not span.name.startswith("spinal"):
             return False
 
-        if not span.attributes.get("spinal.provider"):
+        if not span.attributes.get("spinal.provider") and not span.attributes.get("is_billing_span"):
             return False
         return True
 

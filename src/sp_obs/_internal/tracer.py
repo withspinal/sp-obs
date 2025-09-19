@@ -55,19 +55,12 @@ class SpinalTracerProvider:
         provider = TracerProvider(sampler=ALWAYS_ON, resource=Resource.create({"service.name": service_name}))
 
         # Add only Spinal processor
-        provider.add_span_processor(
-            SpinalSpanProcessor(
-                max_queue_size=self._config.max_queue_size,
-                schedule_delay_millis=self._config.schedule_delay_millis,
-                max_export_batch_size=self._config.max_export_batch_size,
-                export_timeout_millis=self._config.export_timeout_millis,
-            )
-        )
+        provider.add_span_processor(SpinalSpanProcessor(self._config))
 
-        # We need to set the global provider if there currently isn't one
-        global_provider = trace.get_tracer_provider()
-        if isinstance(global_provider, ProxyTracerProvider):
-            trace.set_tracer_provider(provider)
+        if self._config.set_global_tracer:
+            global_provider = trace.get_tracer_provider()
+            if isinstance(global_provider, ProxyTracerProvider):
+                trace.set_tracer_provider(provider)
 
         logger.debug(f"Created isolated tracer provider for service: {service_name}")
         return provider
