@@ -3,6 +3,7 @@ from urllib.parse import urlparse
 
 import httpx
 from httpx import SyncByteStream
+from opentelemetry import trace
 from opentelemetry.context import Context
 from opentelemetry.trace import Tracer, Status, StatusCode
 
@@ -44,9 +45,14 @@ class SyncStreamWrapper(SyncByteStream):
             request = self._response.request
             url = urlparse(str(request.url))
             status_code = self._response.status_code
+            parent_span = trace.get_current_span(self._parent_context)
+            parent_start_time = parent_span.start_time if parent_span and hasattr(parent_span, "start_time") else None
 
             with self._tracer.start_as_current_span(
-                "spinal.httpx.sync.response", context=self._parent_context, attributes=self._parent_attributes
+                "spinal.httpx.sync.response",
+                context=self._parent_context,
+                attributes=self._parent_attributes,
+                start_time=parent_start_time,
             ) as span:
                 content_type = headers.get("content-type", "")
                 encoding = headers.get("content-encoding", "")
