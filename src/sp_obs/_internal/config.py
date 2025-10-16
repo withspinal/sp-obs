@@ -4,6 +4,7 @@ from os import environ
 import logging
 from typing import Protocol, Optional
 
+from sp_obs._internal.core.aiohttp.aiohttp import SpinalAioHttpClientInstrumentor
 from sp_obs._internal.core.httpx.httpx import SpinalHTTPXClientInstrumentor
 from sp_obs._internal.core.requests.requests import SpinalRequestsInstrumentor
 from sp_obs._internal.scrubbing import DefaultScrubber
@@ -224,6 +225,7 @@ class SpinalSDK:
 
             # Setup auto instrumentation
             self.tracer_provider = SpinalTracerProvider(self.config)
+            SpinalAioHttpClientInstrumentor().instrument(tracer_provider=self.tracer_provider.provider)
             SpinalHTTPXClientInstrumentor().instrument(tracer_provider=self.tracer_provider.provider)
             SpinalRequestsInstrumentor().instrument(tracer_provider=self.tracer_provider.provider)
 

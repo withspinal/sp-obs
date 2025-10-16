@@ -1,6 +1,5 @@
 import logging
 import typing
-from enum import StrEnum
 
 from opentelemetry import baggage, trace
 from opentelemetry.sdk.trace import ReadableSpan, Span
@@ -14,21 +13,6 @@ if typing.TYPE_CHECKING:
 from sp_obs._internal.exporter import SpinalSpanExporter
 
 logger = logging.getLogger(__name__)
-
-
-class SpanType(StrEnum):
-    """Enum for the different types of spans"""
-
-    GEN_AI = "gen_ai"
-    HTTPX = "httpx"
-    UNKNOWN = "unknown"
-
-
-EXCLUDED_URLS = {
-    "api.openai.com",
-    "api.anthropic.com",
-    "api.azure.com/openai",
-}
 
 
 class SpinalSpanProcessor(BatchSpanProcessor):

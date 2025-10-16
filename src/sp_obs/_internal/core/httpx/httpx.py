@@ -13,7 +13,7 @@ from opentelemetry.util.http import redact_url
 
 from sp_obs._internal.core.httpx.async_stream import AsyncStreamWrapper
 from sp_obs._internal.core.httpx.sync_stream import SyncStreamWrapper
-from sp_obs._internal.core.recognised_integrations import INTEGRATIONS
+from sp_obs._internal.core.recognised_integrations import supported_host
 from sp_obs.utils import add_request_params_to_span
 
 
@@ -43,7 +43,7 @@ class SpinalHTTPXClientInstrumentor(opentelemetry.instrumentation.httpx.HTTPXCli
                 redacted_url = redact_url(url)
 
                 location = urlparse(redacted_url)
-                integration_provider = INTEGRATIONS.get(location.hostname)
+                integration_provider = supported_host(location.hostname)
                 if not integration_provider:
                     return result
 
