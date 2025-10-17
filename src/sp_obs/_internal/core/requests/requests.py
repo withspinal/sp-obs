@@ -6,7 +6,7 @@ from opentelemetry.trace import Status, StatusCode, get_tracer
 from opentelemetry.util.http import redact_url
 from requests import PreparedRequest, Session
 
-from sp_obs._internal.core.recognised_integrations import INTEGRATIONS
+from sp_obs._internal.core.recognised_integrations import supported_host
 from sp_obs.utils import add_request_params_to_span
 
 
@@ -101,7 +101,7 @@ class SpinalRequestsInstrumentor(opentelemetry.instrumentation.requests.Requests
 
                 span = tracer.start_span(
                     "spinal.requests",
-                    attributes={"http.url": redacted_url, "spinal.provider": INTEGRATIONS.get(url.hostname)},
+                    attributes={"http.url": redacted_url, "spinal.provider": supported_host(url.hostname)},
                 )
                 span.__enter__()  # Manually enter the span context
                 try:
@@ -159,5 +159,21 @@ class SpinalRequestsInstrumentor(opentelemetry.instrumentation.requests.Requests
 
             return wrapped_send
 
-        Session.send = wrap_session_send(Session.send)
+        def wrap_session_request(original_request):
+            """Wrapper for Session.request to ensure instrumentation for thread-local sessions"""
+
+            @wraps(original_request)
+            def wrapped_request(self, method, url, **kwargs):
+                # The request() method internally calls send(), which is already patched.
+                # This wrapper ensures the patch is applied even for thread-local sessions
+                # created before instrumentation (like Voyage AI's _thread_context.session)
+                return original_request(self, method, url, **kwargs)
+
+            return wrapped_request
+
+        # Call parent instrumentation first to avoid conflicts
         super()._instrument(**kwargs)
+
+        # Apply our custom patches on top
+        Session.send = wrap_session_send(Session.send)
+        Session.request = wrap_session_request(Session.request)

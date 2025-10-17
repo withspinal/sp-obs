@@ -1,4 +1,5 @@
 from sp_obs._internal.core.providers.base import BaseProvider
+from sp_obs._internal.core.providers.mistral import MistralProvider
 from sp_obs._internal.core.providers.openai import OpenAIProvider
 from sp_obs._internal.core.providers.anthropic import AnthropicProvider
 from sp_obs._internal.core.providers.firecrawl import FirecrawlProvider
@@ -7,6 +8,8 @@ from sp_obs._internal.core.providers.serpapi import SerpapiProvider
 from sp_obs._internal.core.providers.elevenlabs import ElevenLabsProvider
 from sp_obs._internal.core.providers.deepgram import DeepgramProvider
 from sp_obs._internal.core.providers.perplexity import PerplexityProvider
+from sp_obs._internal.core.providers.vertexai import VertexAIProvider
+from sp_obs._internal.core.providers.voyageai import VoyageAIProvider
 
 _provider_cache = {}
 
@@ -29,6 +32,12 @@ def get_provider(provider_name: str) -> BaseProvider:
             _provider_cache[provider_name] = DeepgramProvider()
         elif provider_name == "perplexity":
             _provider_cache[provider_name] = PerplexityProvider()
+        elif provider_name == "mistral":
+            _provider_cache[provider_name] = MistralProvider()
+        elif provider_name == "vertexai":
+            _provider_cache[provider_name] = VertexAIProvider()
+        elif provider_name == "voyageai":
+            _provider_cache[provider_name] = VoyageAIProvider()
         else:
             raise ValueError(f"Invalid provider name: {provider_name}")
 

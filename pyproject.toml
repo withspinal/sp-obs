@@ -1,6 +1,6 @@
 [project]
 name = "sp-obs"
-version = "0.4.1"
+version = "0.5.0"
 description = "Observability integration with Spinal"
 readme = "README.md"
 authors = [
@@ -21,13 +21,15 @@ classifiers = [
     "Topic :: System :: Monitoring",
 ]
 dependencies = [
-    "opentelemetry-api>=1.35.0,<2",
-    "opentelemetry-sdk>=1.35.0,<2",
+    "opentelemetry-api>=1.38.0,<2",
+    "opentelemetry-sdk>=1.38.0,<2",
     "httpx>=0.28.0,<1.0.0",
     "orjson>=3.11.1,<4",
     "opentelemetry-instrumentation-httpx>=0.57b0,<1",
     "opentelemetry-instrumentation-requests>=0.57b0,<1",
     "opentelemetry-semantic-conventions-ai>=0.4.12",
+    "aiohttp>=3.13.0",
+    "opentelemetry-instrumentation-aiohttp-client>=0.58b0",
 ]
 
 [project.urls]
