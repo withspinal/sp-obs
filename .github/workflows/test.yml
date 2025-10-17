@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.11', '3.12', '3.13']  # Based on your pyproject.toml classifiers
+        python-version: ['3.11', '3.12', '3.13', '3.14']  # Based on your pyproject.toml classifiers
 
     steps:
       - name: Checkout code

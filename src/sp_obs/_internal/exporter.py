@@ -130,15 +130,17 @@ class SpinalSpanExporter(SpanExporter):
             return attributes
 
         binary_data = bytes(raw_data_mv)
-        request_parameters = orjson.loads(binary_data)
-        request_input = request_parameters.get("input", [])
+        request_attributes = orjson.loads(binary_data)
+        request_input = request_attributes.get("input", [])
         if isinstance(request_input, list):
-            for i in request_parameters.get("input", []):
+            for i in request_attributes.get("input", []):
                 # We do not want to accept content from like images (OpenAI specific)
                 if (d := i.get("id")) and d.startswith("ig_"):
                     del i["result"]
 
-        attributes.update(request_parameters)
+        provider = get_provider(attributes.get("spinal.provider"))
+        parsed_attributes = provider.parse_request_attributes(request_attributes)
+        attributes.update(parsed_attributes)
         return attributes
 
     def decode_response_binary_data(self, attributes: dict[str, Any]) -> dict[str, Any]:
