@@ -7,6 +7,8 @@ from typing import Protocol, Optional
 from sp_obs._internal.core.aiohttp.aiohttp import SpinalAioHttpClientInstrumentor
 from sp_obs._internal.core.httpx.httpx import SpinalHTTPXClientInstrumentor
 from sp_obs._internal.core.requests.requests import SpinalRequestsInstrumentor
+from sp_obs._internal.core.grpc.grpc import SpinalGrpcClientInstrumentor
+from sp_obs._internal.core.grpc.grpc_aio import SpinalGrpcAioClientInstrumentor
 from sp_obs._internal.scrubbing import DefaultScrubber
 from sp_obs._internal.tracer import SpinalTracerProvider
 from opentelemetry.util.http import PARAMS_TO_REDACT
@@ -228,6 +230,8 @@ class SpinalSDK:
             SpinalAioHttpClientInstrumentor().instrument(tracer_provider=self.tracer_provider.provider)
             SpinalHTTPXClientInstrumentor().instrument(tracer_provider=self.tracer_provider.provider)
             SpinalRequestsInstrumentor().instrument(tracer_provider=self.tracer_provider.provider)
+            SpinalGrpcClientInstrumentor().instrument(tracer_provider=self.tracer_provider.provider)
+            SpinalGrpcAioClientInstrumentor().instrument(tracer_provider=self.tracer_provider.provider)
 
             # Add to params to redact util
             PARAMS_TO_REDACT.append("api_key")

@@ -1,6 +1,6 @@
 [project]
 name = "sp-obs"
-version = "0.5.1"
+version = "0.5.2"
 description = "Observability integration with Spinal"
 readme = "README.md"
 authors = [
@@ -30,7 +30,10 @@ dependencies = [
     "opentelemetry-semantic-conventions-ai>=0.4.12",
     "aiohttp>=3.13.0",
     "opentelemetry-instrumentation-aiohttp-client>=0.58b0",
+    "grpcio>=1.68.1,<2",
+    "opentelemetry-instrumentation-grpc>=0.59b0",
 ]
+
 
 [project.urls]
 Homepage = "https://github.com/withspinal/sp-obs"
@@ -64,4 +67,6 @@ test = [
     "requests-mock>=1.12.1",
     "httpx>=0.28.0",
     "requests>=2.32.0",
+    "grpcio>=1.68.1,<2",
+    "opentelemetry-instrumentation-grpc>=0.59b0",
 ]
