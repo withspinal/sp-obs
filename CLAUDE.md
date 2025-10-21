@@ -63,7 +63,9 @@ The library uses an **interceptor pattern** to attach to existing OpenTelemetry 
 - `src/sp_obs/_internal/exporter.py`: SpinalSpanExporter (singleton with httpx session) and safe_decode utility
 - `src/sp_obs/_internal/config.py`: Configuration management
 - `src/sp_obs/_internal/providers/`: Provider-specific instrumentations (OpenAI, Anthropic, etc.)
+- `src/sp_obs/_internal/core/grpc/`: gRPC client instrumentation
 - `tests/test_exporter/test_safe_decode.py`: Tests for encoding/decoding handling
+- `tests/test_grpc/`: gRPC instrumentation tests
 
 ### Key Classes
 
@@ -102,11 +104,76 @@ Uses OpenTelemetry baggage for distributed tracing:
 - Automatically propagates through HTTP headers (W3C format)
 - Context manager pattern ensures proper attach/detach
 
+### gRPC Instrumentation
+
+The library includes automatic gRPC client instrumentation following the same pattern as HTTP instrumentors (httpx, aiohttp):
+
+#### Architecture
+- **SpinalGrpcClientInstrumentor** (`_internal/core/grpc/grpc.py`): Wraps OpenTelemetry's gRPC instrumentation
+- **Service Pattern Registry** (`_internal/core/grpc/grpc_integrations.py`): Maps gRPC service names to provider identifiers
+- Automatically registered in `configure()` alongside HTTP instrumentors
+
+#### How It Works
+1. Extends OpenTelemetry's `GrpcInstrumentorClient`
+2. Uses `request_hook` and `response_hook` to intercept gRPC calls
+3. Extracts service name from OpenTelemetry span attributes (`rpc.service`)
+4. Matches service name against known patterns (fnmatch-style wildcards)
+5. Creates child spans **only for matched services**
+6. Captures **metadata only** (no request/response payloads)
+
+#### Service Pattern Matching
+The `GRPC_SERVICE_PATTERNS` registry maps service patterns to provider identifiers:
+```python
+{
+    "google.cloud.documentai.*": "gcp-documentai",
+    "google.cloud.vision.*": "gcp-vision",
+    "google.cloud.*": "gcp",  # Catch-all for other GCP services
+    "aws.comprehend.*": "aws-comprehend",
+    # Extensible: users can add custom patterns
+}
+```
+
+#### Data Captured (Metadata Only)
+- **Service Metadata**:
+  - `spinal.provider`: Matched provider (e.g., "gcp-documentai", "aws-comprehend")
+  - `grpc.service`: Full service name from RPC call
+  - `grpc.method`: Method name from RPC call
+  - `grpc.status_code`: Response status code
+  - Other gRPC metadata: `rpc.*` and `grpc.*` attributes from parent span
+- **NO binary data**: Request/response payloads are not captured (privacy-safe, lightweight)
+
+#### Span Hierarchy
+```
+/ServiceName/MethodName (OpenTelemetry gRPC span - parent)
+  └── spinal.grpc.request (Spinal child span - metadata only)
+```
+
+#### Selective Tracking
+- Only creates Spinal child spans for services matching known patterns
+- Unknown services are ignored (no span created, no overhead)
+- Provider identification allows filtering by service type in Spinal platform
+- Consistent with HTTP instrumentor pattern (check host → create span if matched)
+
+#### Important Notes
+- **Metadata Only**: No request/response body capture (unlike earlier implementation)
+- **Pattern-Based**: Extensible via `GRPC_SERVICE_PATTERNS` registry
+- **Service Identification**: Uses service name patterns instead of generic "grpc" provider
+- **Privacy-Safe**: No payload serialization or storage
+- **Lightweight**: Minimal overhead, only metadata attributes
+- **Thread Safety**: Uses `WeakKeyDictionary` to track child spans
+
+#### Testing
+- Tests located in `tests/test_grpc/test_sync_grpc.py`
+- Tests service pattern matching logic
+- Verifies only matched services create child spans
+- Confirms metadata-only capture (no binary data attributes)
+- Tests extraction of gRPC metadata from parent spans
+
 ## Important Considerations
 
 1. **Thread Safety**: Baggage doesn't cross thread boundaries - captured in `on_start()` while context is available.
 
-2. **Selective Processing**: Only forwards AI/LLM spans and HTTPX requests (excluding AI provider endpoints).
+2. **Selective Processing**: Only forwards AI/LLM spans, HTTP requests (HTTPX, requests, aiohttp), and gRPC calls.
 
 3. **Singleton Exporter**: SpinalSpanExporter uses singleton pattern to reuse HTTP connections.
 
