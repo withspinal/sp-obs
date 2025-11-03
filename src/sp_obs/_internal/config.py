@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import threading
 import typing
 from os import environ
 import logging
-from typing import Protocol, Optional
+from typing import Protocol
 
 from sp_obs._internal.core.aiohttp.aiohttp import SpinalAioHttpClientInstrumentor
 from sp_obs._internal.core.httpx.httpx import SpinalHTTPXClientInstrumentor
@@ -50,16 +52,16 @@ class SpinalConfig:
 
     def __init__(
         self,
-        endpoint: typing.Optional[str] = None,
-        api_key: typing.Optional[str] = None,
-        headers: typing.Optional[dict[str, str]] = None,
+        endpoint: str | None = None,
+        api_key: str | None = None,
+        headers: dict[str, str] | None = None,
         timeout: int = 5,
         max_queue_size: int | None = None,
         max_export_batch_size: int | None = None,
         schedule_delay_millis: float | None = None,
         export_timeout_millis: float | None = None,
-        scrubber: Optional[SpinalScrubber] = None,
-        opentelemetry_log_level: str = logging.ERROR,
+        scrubber: SpinalScrubber | None = None,
+        opentelemetry_log_level: int = logging.ERROR,
         set_global_tracer: bool = True,
     ):
         self.endpoint = endpoint or environ.get("SPINAL_TRACING_ENDPOINT") or "https://cloud.withspinal.com"
@@ -144,7 +146,7 @@ class SpinalConfig:
 class SpinalSDK:
     """Singleton SDK instance that manages configuration and tracer provider"""
 
-    _instance: Optional["SpinalSDK"] = None
+    _instance: SpinalSDK | None = None
     _lock = threading.Lock()
 
     def __new__(cls):
@@ -169,6 +171,7 @@ class SpinalSDK:
         schedule_delay_millis: float | None = None,
         export_timeout_millis: float | None = None,
         scrubber: SpinalScrubber | None = None,
+        opentelemetry_log_level: int = logging.ERROR,
         set_global_tracer: bool = True,
     ) -> SpinalConfig:
         """
@@ -198,6 +201,8 @@ class SpinalSDK:
             Timeout in milliseconds for exporting operations. None if not configured.
         scrubber: SpinalScrubber | None
             A configuration scrubber for cleaning sensitive data. None to disable.
+        opentelemetry_log_level: int
+            Log level for OpenTelemetry. Default is logging.ERROR.
         set_global_tracer: bool
             If set, will configure the global tracer provider to Spinals. Default is True.
             Turn off if you are using an observability framework that already has a global tracer provider.
@@ -222,6 +227,7 @@ class SpinalSDK:
                 max_export_batch_size=max_export_batch_size,
                 schedule_delay_millis=schedule_delay_millis,
                 export_timeout_millis=export_timeout_millis,
+                opentelemetry_log_level=opentelemetry_log_level,
                 set_global_tracer=set_global_tracer,
             )
 
@@ -247,7 +253,7 @@ class SpinalSDK:
             return self.configure()
         return self.config
 
-    def get_tracer_provider(self) -> Optional[SpinalTracerProvider]:
+    def get_tracer_provider(self) -> SpinalTracerProvider | None:
         """Get the tracer provider, returns None if not configured"""
         return self.tracer_provider
 
@@ -260,9 +266,34 @@ class SpinalSDK:
 _sdk = SpinalSDK()
 
 
-def configure(**kwargs) -> SpinalConfig:
+def configure(
+    *,
+    endpoint: str | None = None,
+    api_key: str | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: int = 5,
+    max_queue_size: int | None = None,
+    max_export_batch_size: int | None = None,
+    schedule_delay_millis: float | None = None,
+    export_timeout_millis: float | None = None,
+    scrubber: SpinalScrubber | None = None,
+    opentelemetry_log_level: int = logging.ERROR,
+    set_global_tracer: bool = True,
+) -> SpinalConfig:
     """Configure the global Spinal SDK instance"""
-    return _sdk.configure(**kwargs)
+    return _sdk.configure(
+        endpoint=endpoint,
+        api_key=api_key,
+        headers=headers,
+        timeout=timeout,
+        max_queue_size=max_queue_size,
+        max_export_batch_size=max_export_batch_size,
+        schedule_delay_millis=schedule_delay_millis,
+        export_timeout_millis=export_timeout_millis,
+        scrubber=scrubber,
+        opentelemetry_log_level=opentelemetry_log_level,
+        set_global_tracer=set_global_tracer,
+    )
 
 
 def get_tracer_provider():
